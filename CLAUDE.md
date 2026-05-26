@@ -20,10 +20,11 @@
 ```
 D:\wsl-share\harmony-game\        ← 工作区根目录（WSL 挂载路径：/mnt/d/wsl-share/harmony-game）
 ├── CLAUDE.md                     ← 本文件，项目说明
-├── TODO.md                       ← 10天开发工作流
 ├── LICENSE                       ← MIT 协议（来自远端 GitHub 仓库）
 ├── .gitignore                    ← 忽略 oh_modules / build / .preview / local.properties 等
-├── docs\                         ← 开发过程文档（按天分目录）
+├── docs\                         ← 开发过程文档（按天分目录 + 项目级规范）
+│   ├── TODO.md                   ← 10 天开发工作流（每日勾选进度）
+│   ├── git-format.md             ← Git 提交信息与分支命名规范（Conventional Commits 风格）
 │   ├── day1\
 │   │   └── day1-plan.md          ← Day 1 实施蓝图（Claude Code 生成）
 │   ├── day2\
@@ -37,13 +38,17 @@ D:\wsl-share\harmony-game\        ← 工作区根目录（WSL 挂载路径：/m
 
 ### docs/ 目录约定
 
-- 每个开发日新建 `docs/dayN/` 子目录
-- 开工前 Claude Code 先在 `docs/dayN/dayN-plan.md` 写实施计划（目标拆解、文件清单、技术要点、风险），再开始编码
-- 调研、设计草图、问题排查记录也按天归档到对应子目录
+- `docs/TODO.md`：10 天开发工作流总表，每日完成后勾选并标注日期
+- `docs/git-format.md`：Git 提交信息（`<type>(<scope>): <subject>`）与分支命名（`<type>/<desc>`）规范，所有提交/分支命名以此为准
+- `docs/dayN/`：每个开发日的工作子目录
+  - 开工前 Claude Code 先在 `docs/dayN/dayN-plan.md` 写实施计划（目标拆解、文件清单、技术要点、风险），再开始编码
+  - 调研、设计草图、问题排查记录也按天归档到对应子目录
 
 ### 远端仓库
 
 GitHub: `https://github.com/luminenoble/harmonyOS-project-tau_realm_maze.git`（origin/main）
+
+提交信息与分支命名遵循 `docs/git-format.md`。
 
 ## WSL + Claude Code 协作规范
 
