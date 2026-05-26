@@ -7,16 +7,17 @@
 
 ---
 
-## Day 1 — 环境搭建 & 等距渲染验证 ⚡关键里程碑
+## Day 1 — 环境搭建 & 等距渲染验证 ⚡关键里程碑 ✅ 已完成（2026-05-26）
 
 **目标：** 在 Canvas 上渲染出一块静态等距菱形地图，确认技术路线可行。
 
-- [ ] DevEco Studio 确认工程已建立于 `app-storage\`，应用名称设为 `TauRealmMaze`，包名建议 `com.taorealmmaze.app`
-- [ ] 确认 WSL 可访问 `/mnt/d/wsl-share/harmony-game/app-storage/entry/src/main/ets/`（`ls` 验证）
-- [ ] 新建 `GamePage.ets`，挂载 Canvas 组件
-- [ ] 实现 `IsoMath.ts`：网格坐标 ↔ 屏幕坐标互转
-- [ ] 用 Canvas 绘制 5×5 静态等距菱形地图（地板瓦片）
-- [ ] 验收标准：菱形网格正确显示，无坐标错位
+- [x] DevEco Studio 确认工程已建立于 `app-storage\`，应用名称设为 `TauRealmMaze`，包名建议 `com.taorealmmaze.app`
+- [x] 确认 WSL 可访问 `/mnt/d/wsl-share/harmony-game/app-storage/entry/src/main/ets/`（`ls` 验证）
+- [x] 新建 `GamePage.ets`，挂载 Canvas 组件
+- [x] 实现 `IsoMath.ts`：网格坐标 ↔ 屏幕坐标互转
+- [x] 用 Canvas 绘制 5×5 静态等距菱形地图（地板瓦片）
+- [x] 验收标准：菱形网格正确显示，无坐标错位
+- [x] 附加：`Index.ets` 改造为主菜单 + 路由跳转；`IsoRenderer.ts` 抽出绘制函数；`docs/day1/day1-plan.md` 内部蓝图；git 仓库初始化并合并远端 MIT LICENSE
 
 > **编译检测方式**：Claude Code 写完代码 → 你在 DevEco Studio `Build → Make Module` → 报错截图/粘贴给 Claude Code → 循环修复
 >

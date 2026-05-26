@@ -21,12 +21,29 @@
 D:\wsl-share\harmony-game\        ← 工作区根目录（WSL 挂载路径：/mnt/d/wsl-share/harmony-game）
 ├── CLAUDE.md                     ← 本文件，项目说明
 ├── TODO.md                       ← 10天开发工作流
+├── LICENSE                       ← MIT 协议（来自远端 GitHub 仓库）
+├── .gitignore                    ← 忽略 oh_modules / build / .preview / local.properties 等
+├── docs\                         ← 开发过程文档（按天分目录）
+│   ├── day1\
+│   │   └── day1-plan.md          ← Day 1 实施蓝图（Claude Code 生成）
+│   ├── day2\
+│   └── ...                       ← 每日新建 dayN\ 子目录存放当日计划/笔记
 └── app-storage\                  ← DevEco Studio 工程根目录
     ├── entry\
     ├── AppScope\
     ├── build-profile.json5
     └── ...
 ```
+
+### docs/ 目录约定
+
+- 每个开发日新建 `docs/dayN/` 子目录
+- 开工前 Claude Code 先在 `docs/dayN/dayN-plan.md` 写实施计划（目标拆解、文件清单、技术要点、风险），再开始编码
+- 调研、设计草图、问题排查记录也按天归档到对应子目录
+
+### 远端仓库
+
+GitHub: `https://github.com/luminenoble/harmonyOS-project-tau_realm_maze.git`（origin/main）
 
 ## WSL + Claude Code 协作规范
 
@@ -59,6 +76,28 @@ Claude Code 修改代码
 截图或粘贴错误给 Claude Code 修复
         ↓
 循环直到 Build 成功
+```
+
+### 代码注释规范
+
+> ⚠️ **项目级约定**：本项目用于课程作业 + 学习展示，需要 AI 生成的代码具备可读性。
+> 此规则**覆盖** Claude Code 默认的"无注释"策略。
+
+Claude Code 生成的所有 `.ets` / `.ts` 文件应包含**简单注释**：
+
+- 文件顶部 1-2 行说明该文件职责
+- 每个导出的类 / 接口 / 函数前用单行注释说明用途
+- 关键算法、坐标公式、魔法数字应有 inline 注释
+- 注释保持简洁（中文优先），避免长篇 docstring 和"显而易见"的废话
+- 重要 TODO / 后续阶段才会用到的占位逻辑，标注 `// Day N: ...` 提示
+
+示例：
+```typescript
+// 等距坐标互转：网格 ↔ 屏幕
+// screen_x = (col - row) * tileHalfW + originX
+export function gridToScreen(col: number, row: number, cfg: IsoConfig): ScreenPoint {
+  // ...
+}
 ```
 
 ### 语法预检（可选加速）
