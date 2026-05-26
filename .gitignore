@@ -1,0 +1,32 @@
+# ===== HarmonyOS / DevEco Studio =====
+**/node_modules/
+**/oh_modules/
+**/build/
+**/.preview/
+**/.cxx/
+**/.test/
+**/.hvigor/
+**/.appanalyzer/
+**/local.properties
+**/.clangd
+**/.clang-format
+**/.clang-tidy
+
+# ===== IDE =====
+**/.idea/
+*.iml
+.vscode/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== WSL / Editor swap =====
+*.swp
+*.swo
+*~
+
+# ===== Logs / Temp =====
+*.log
+*.tmp
