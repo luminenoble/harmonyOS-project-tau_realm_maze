@@ -30,3 +30,6 @@ desktop.ini
 # ===== Logs / Temp =====
 *.log
 *.tmp
+
+# 临时文件
+tmp/
