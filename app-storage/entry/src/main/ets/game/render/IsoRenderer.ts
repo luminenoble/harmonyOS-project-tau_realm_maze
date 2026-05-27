@@ -3,7 +3,9 @@
 
 import { gridToScreen, IsoConfig, ScreenPoint } from '../../utils/IsoMath';
 import { MapManager } from '../core/MapManager';
+import { Player } from '../core/Player';
 import { drawTile } from './TileSet';
+import { drawPlayer } from './PlayerRenderer';
 import { Tile } from '../types/TileType';
 
 // 瓦片视觉样式：填充色、描边色、线宽（保留给 Day 1 旧 API 使用）
@@ -62,24 +64,37 @@ export function drawIsoGrid(
   }
 }
 
-// Painter's Algorithm 排序绘制整张地图
-// key = row + col，升序遍历：远处先画，近处后画，墙体遮挡顺序天然正确
-// 同 key 内部按 row 升序（无视觉差异，保证遍历稳定）
+// 渲染项类型：地图 cell 或玩家
+// 用三元组 [col, row, kind] 编码：kind=0 表 cell，kind=1 表玩家（坐标可能为浮点）
+// 玩家排序 key 末尾加微小偏移，避免与同 (row+col) 的 cell z-fighting
+const KIND_CELL: number = 0;
+const KIND_PLAYER: number = 1;
+
+// Painter's Algorithm 排序绘制整张地图（可选地把玩家排入序中）
+// key = row + col，升序遍历：远处先画，近处后画
+// 玩家以 visualCol/Row 浮点坐标参与排序，过墙脚时遮挡正确
 export function drawMap(
   ctx: CanvasRenderingContext2D,
   map: MapManager,
   cfg: IsoConfig,
   wallH: number,
-  layer: number = 0
+  layer: number = 0,
+  player?: Player,
+  playerH?: number
 ): void {
-  // 收集 (col, row) 并排序
-  const cells: number[][] = [];
+  // 收集所有渲染项：每项 [col(float), row(float), kind]
+  const items: number[][] = [];
   for (let r = 0; r < map.rows; r++) {
     for (let c = 0; c < map.cols; c++) {
-      cells.push([c, r]);
+      items.push([c, r, KIND_CELL]);
     }
   }
-  cells.sort((a: number[], b: number[]) => {
+  if (player !== undefined) {
+    // 玩家排序键加 0.001 偏移，保证同 row+col 时晚于 cell 绘制
+    items.push([player.visualCol() + 0.001, player.visualRow() + 0.001, KIND_PLAYER]);
+  }
+
+  items.sort((a: number[], b: number[]) => {
     const ka: number = a[0] + a[1];
     const kb: number = b[0] + b[1];
     if (ka !== kb) {
@@ -88,15 +103,22 @@ export function drawMap(
     return a[1] - b[1];
   });
 
-  // 按排序后顺序逐格绘制
-  for (let i = 0; i < cells.length; i++) {
-    const c: number = cells[i][0];
-    const r: number = cells[i][1];
-    const tile: Tile | undefined = map.getTile(c, r, layer);
-    if (tile === undefined) {
-      continue;
-    }
+  // 按排序后顺序逐项绘制
+  const ph: number = (playerH === undefined) ? wallH * 0.6 : playerH;
+  for (let i = 0; i < items.length; i++) {
+    const c: number = items[i][0];
+    const r: number = items[i][1];
+    const kind: number = items[i][2];
     const p: ScreenPoint = gridToScreen(c, r, layer, cfg);
-    drawTile(ctx, tile.type, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, wallH);
+
+    if (kind === KIND_PLAYER) {
+      drawPlayer(ctx, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, ph);
+    } else {
+      const tile: Tile | undefined = map.getTile(c, r, layer);
+      if (tile === undefined) {
+        continue;
+      }
+      drawTile(ctx, tile.type, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, wallH);
+    }
   }
 }
