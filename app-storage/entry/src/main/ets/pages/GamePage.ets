@@ -17,6 +17,10 @@ struct GamePage {
   private readonly GRID_ROWS: number = 13;
   private readonly BG_COLOR: string = '#0a0e1a';
 
+  // 多层堆叠预留：当前仅渲染 Layer 0，但 originY 按 3 层规划留出头部空间
+  // Day 4 多层启用后 Layer 1/2 向上堆叠刚好填满，避免再调整布局
+  private readonly TARGET_LAYERS: number = 3;
+
   // 地图数据，onReady 时构造（构造内部即调用 MazeGenerator 生成）
   private map: MapManager | null = null;
 
@@ -36,9 +40,16 @@ struct GamePage {
     const halfH: number = Math.floor(halfW / 2);   // 2:1 等距比例
     const wallH: number = halfW;                    // 墙高 = 瓦片半宽，立方感
 
-    // 计算原点：水平居中；垂直留出 wallH + halfH 让最远墙顶不被截
+    // 垂直居中（按 TARGET_LAYERS 计算理论占用高度）：
+    //   contentH = 顶层最高墙顶 → 底层最远地板底 的纵向跨度
+    //            = TARGET_LAYERS * wallH（多层堆叠 + 最顶层墙高）
+    //            + (cols + rows) * halfH（单层菱形对角线纵跨）
+    // 让该 contentH 在画布中垂直居中；Layer 0 是最下层，因此其 originY 锚到内容下沿之前
+    const contentH: number = this.TARGET_LAYERS * wallH + (this.GRID_COLS + this.GRID_ROWS) * halfH;
+    const topMargin: number = Math.max(0, (h - contentH) / 2);
     const originX: number = w / 2;
-    const originY: number = wallH + halfH + 20;
+    // Layer 0 的 originY = 顶部预留 + 上方所有层占用的高度 + 顶层墙的 halfH 头部空间
+    const originY: number = topMargin + this.TARGET_LAYERS * wallH + halfH;
 
     const cfg: IsoConfig = new IsoConfig(halfW, halfH, -wallH, originX, originY);
 
