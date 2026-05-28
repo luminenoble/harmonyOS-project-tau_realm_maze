@@ -74,7 +74,8 @@ struct GamePage {
     const maxHalfW: number = Math.floor((w - 40) / (this.GRID_COLS + this.GRID_ROWS));
     const halfW: number = Math.min(28, Math.max(8, maxHalfW));
     const halfH: number = Math.floor(halfW / 2);
-    const wallH: number = halfW;
+    // 墙高降到 0.45 倍瓦片半宽，露出后排路面，仍保留立体感
+    const wallH: number = Math.max(4, Math.floor(halfW * 0.45));
 
     // 垂直居中（按 TARGET_LAYERS 计算理论占用高度）
     const contentH: number = this.TARGET_LAYERS * wallH + (this.GRID_COLS + this.GRID_ROWS) * halfH;

@@ -4,14 +4,15 @@
 
 import { Tile, TileType } from '../types/TileType';
 
-// 颜色常量：深蓝 PCB + 青绿电路
-const COLOR_FLOOR_FILL: string = '#0d3b3b';
-const COLOR_FLOOR_STROKE: string = '#22d3a8';
+// 颜色：地板用冷蓝（暗底 + 亮蓝描边），墙体用黑金（金顶 + 黑侧）
+// 冷暖对立 + 大色相差，小屏上路 ↔ 墙一眼可分
+const COLOR_FLOOR_FILL: string = '#0c1a36';     // 极暗蓝，路面"沉下去"
+const COLOR_FLOOR_STROKE: string = '#5a8cd0';   // 亮蓝描边，电路"通路"感
 
-// 墙体三面（顶/右/左）由亮到暗模拟受光
-const COLOR_WALL_TOP: string = '#22d3a8';
-const COLOR_WALL_RIGHT: string = '#177a6a';
-const COLOR_WALL_LEFT: string = '#0f4f48';
+// 墙体三面（顶/右/左）：金 → 暗金 → 近黑，模拟侧光
+const COLOR_WALL_TOP: string = '#e0b35e';       // 金
+const COLOR_WALL_RIGHT: string = '#6a4f1e';     // 暗金/古铜
+const COLOR_WALL_LEFT: string = '#2a1e0a';      // 近黑棕
 const COLOR_WALL_STROKE: string = '#0a0e1a';
 
 // 占位色（Day 5 进一步精化）
