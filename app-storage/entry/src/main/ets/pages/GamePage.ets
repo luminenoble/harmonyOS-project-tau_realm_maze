@@ -1,8 +1,9 @@
 // 游戏主页面：Canvas 宿主 + 滑动手势输入 + 引擎驱动重绘
-// Day 3：13×13 迷宫 + 玩家四方向移动 + 碰撞检测
+// Day 4：3 层迷宫 + Via 切层转场 + HUD 层数指示
 import { router } from '@kit.ArkUI';
 import { IsoConfig } from '../utils/IsoMath';
 import { drawMap } from '../game/render/IsoRenderer';
+import { drawFade, drawLayerLabel } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine } from '../game/core/GameEngine';
 
@@ -18,8 +19,7 @@ struct GamePage {
   private readonly GRID_ROWS: number = 13;
   private readonly BG_COLOR: string = '#0a0e1a';
 
-  // 多层堆叠预留：当前仅渲染 Layer 0，但 originY 按 3 层规划留出头部空间
-  // Day 4 多层启用后 Layer 1/2 向上堆叠刚好填满，避免再调整布局
+  // 多层堆叠预留：Day 4 实际启用 3 层，layout 锚定与之一致
   private readonly TARGET_LAYERS: number = 3;
 
   // 滑动判定阈值（px），太小会误触
@@ -28,14 +28,12 @@ struct GamePage {
   // 引擎实例：aboutToAppear 构造，aboutToDisappear 停机
   private engine: GameEngine | null = null;
 
+  // 顶部 HUD 显示用层号；tick 回调内同步以触发 ArkUI 文本刷新
+  @State currentLayer: number = 0;
+
   // 页面入场：构造引擎与地图
-  // Canvas 通过 ctx 直接绘制，不依赖 @State 触发重绘
   aboutToAppear(): void {
-    const map: MapManager = new MapManager(this.GRID_COLS, this.GRID_ROWS);
-    this.engine = new GameEngine(map, 1, 1);
-    this.engine.setTickCallback(() => {
-      this.renderMap();
-    });
+    this.initEngine();
   }
 
   // 页面退出：停 timer 防止泄漏
@@ -45,7 +43,25 @@ struct GamePage {
     }
   }
 
-  // 渲染入口：清屏 → 自适应瓦片尺寸 → 按 painter's 顺序绘制
+  // 抽出引擎构造，aboutToAppear 与"↻ 重生"复用
+  private initEngine(): void {
+    if (this.engine !== null) {
+      this.engine.stop();
+    }
+    const map: MapManager = new MapManager(this.GRID_COLS, this.GRID_ROWS, this.TARGET_LAYERS);
+    this.engine = new GameEngine(map, 1, 1);
+    this.currentLayer = 0;
+    this.engine.setTickCallback(() => {
+      const e: GameEngine = this.engine as GameEngine;
+      // 转场 swap 后同步层号到 ArkUI Text
+      if (this.currentLayer !== e.currentLayer) {
+        this.currentLayer = e.currentLayer;
+      }
+      this.renderMap();
+    });
+  }
+
+  // 渲染入口：清屏 → 自适应瓦片尺寸 → painter's 顺序绘制 → 覆盖层
   private renderMap(): void {
     const w: number = this.ctx.width;
     const h: number = this.ctx.height;
@@ -54,12 +70,11 @@ struct GamePage {
     this.ctx.fillStyle = this.BG_COLOR;
     this.ctx.fillRect(0, 0, w, h);
 
-    // 自适应瓦片半宽：保证 (cols + rows) * halfW <= 画布宽 - 边距
-    // 上限 28 px，避免在大屏上瓦片过大失真
+    // 自适应瓦片半宽
     const maxHalfW: number = Math.floor((w - 40) / (this.GRID_COLS + this.GRID_ROWS));
     const halfW: number = Math.min(28, Math.max(8, maxHalfW));
-    const halfH: number = Math.floor(halfW / 2);   // 2:1 等距比例
-    const wallH: number = halfW;                    // 墙高 = 瓦片半宽，立方感
+    const halfH: number = Math.floor(halfW / 2);
+    const wallH: number = halfW;
 
     // 垂直居中（按 TARGET_LAYERS 计算理论占用高度）
     const contentH: number = this.TARGET_LAYERS * wallH + (this.GRID_COLS + this.GRID_ROWS) * halfH;
@@ -73,12 +88,18 @@ struct GamePage {
       return;
     }
     const e: GameEngine = this.engine as GameEngine;
-    // 玩家高度 = 0.6 倍墙高
-    drawMap(this.ctx, e.map, cfg, wallH, 0, e.player, wallH * 0.6);
+
+    // 渲染当前层（不渲染其他层，Day 4 简化处理）
+    drawMap(this.ctx, e.map, cfg, wallH, e.currentLayer, e.player, wallH * 0.6);
+
+    // Canvas 左上角层数小标签
+    drawLayerLabel(this.ctx, e.currentLayer, this.TARGET_LAYERS - 1, 12, 12);
+
+    // 转场黑屏覆盖（最后画，覆盖所有内容）
+    drawFade(this.ctx, w, h, e.transitionAlpha);
   }
 
   // 滑动手势 → 网格方向 → 引擎 tryMove
-  // 方案 A：屏幕上下左右直接对应 row±1 / col±1
   private handleSwipe(dx: number, dy: number): void {
     if (this.engine === null) {
       return;
@@ -104,7 +125,7 @@ struct GamePage {
 
   build() {
     Column() {
-      // 顶部 HUD：返回 + 标题 + 重生
+      // 顶部 HUD：返回 + 标题(含层号) + 重生
       Row() {
         Button('← 返回')
           .fontSize(14)
@@ -115,7 +136,7 @@ struct GamePage {
             router.back();
           })
 
-        Text('TauRealmMaze · Layer 0')
+        Text('TauRealmMaze · Layer ' + this.currentLayer + '/' + (this.TARGET_LAYERS - 1))
           .fontSize(16)
           .fontColor('#22d3a8')
           .margin({ left: 16 })
@@ -128,15 +149,7 @@ struct GamePage {
           .fontColor('#22d3a8')
           .height(36)
           .onClick(() => {
-            // 重建地图与玩家
-            const map: MapManager = new MapManager(this.GRID_COLS, this.GRID_ROWS);
-            if (this.engine !== null) {
-              (this.engine as GameEngine).stop();
-            }
-            this.engine = new GameEngine(map, 1, 1);
-            this.engine.setTickCallback(() => {
-              this.renderMap();
-            });
+            this.initEngine();
             this.renderMap();
           })
       }

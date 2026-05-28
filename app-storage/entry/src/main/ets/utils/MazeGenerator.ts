@@ -4,7 +4,8 @@
 import { Tile, TileType } from '../game/types/TileType';
 
 // 可种子化随机数生成器，避免依赖不可复现的 Math.random
-class Rng {
+// Day 4 导出供 MapManager 在多层种子分发时复用
+export class Rng {
   private s: number;
 
   constructor(seed: number) {
@@ -112,5 +113,73 @@ export class MazeGenerator {
       arr[j] = tmp;
     }
     return arr;
+  }
+
+  // 为多层地图配对放置 Via 节点
+  // 每对相邻层 (L, L+1) 选 perPair 个同坐标 cell，两层都标 VIA + viaTarget 指向对方
+  // 候选优先选两层都已是 FLOOR 的 cell；若不足，强行 carve（WALL→FLOOR 不破坏连通性）
+  // 外圈 (索引 0 / size-1) 是外墙，不在候选范围
+  // 起点 (1,1) 也排除，避免一进游戏就被自动切层
+  static placeVias(layers: Tile[][][], rng: Rng, perPair: number): void {
+    const layerCount: number = layers.length;
+    if (layerCount < 2) {
+      return;
+    }
+    const rows: number = layers[0].length;
+    const cols: number = layers[0][0].length;
+
+    for (let L = 0; L < layerCount - 1; L++) {
+      const upper: number = L + 1;
+      // 阶段 1：收集两层共同 FLOOR 的候选
+      const candidates: number[][] = [];
+      for (let r = 1; r < rows - 1; r++) {
+        for (let c = 1; c < cols - 1; c++) {
+          if (c === 1 && r === 1) {
+            continue;
+          }
+          if (layers[L][r][c].type === TileType.FLOOR
+              && layers[upper][r][c].type === TileType.FLOOR) {
+            candidates.push([c, r]);
+          }
+        }
+      }
+
+      // 阶段 2：候选不足则在仅一侧 FLOOR 的 cell 上 carve 补足
+      if (candidates.length < perPair) {
+        for (let r = 1; r < rows - 1 && candidates.length < perPair; r++) {
+          for (let c = 1; c < cols - 1 && candidates.length < perPair; c++) {
+            if (c === 1 && r === 1) {
+              continue;
+            }
+            const downIsFloor: boolean = layers[L][r][c].type === TileType.FLOOR;
+            const upIsFloor: boolean = layers[upper][r][c].type === TileType.FLOOR;
+            if (downIsFloor && !upIsFloor) {
+              layers[upper][r][c].type = TileType.FLOOR;
+              candidates.push([c, r]);
+            } else if (!downIsFloor && upIsFloor) {
+              layers[L][r][c].type = TileType.FLOOR;
+              candidates.push([c, r]);
+            }
+          }
+        }
+      }
+
+      // 阶段 3：从候选中随机选 perPair 个 + Fisher-Yates 打乱前缀
+      const k: number = Math.min(perPair, candidates.length);
+      for (let i = 0; i < k; i++) {
+        const j: number = i + rng.nextInt(candidates.length - i);
+        const tmp: number[] = candidates[i];
+        candidates[i] = candidates[j];
+        candidates[j] = tmp;
+      }
+
+      // 阶段 4：写回 VIA 标记
+      for (let i = 0; i < k; i++) {
+        const c: number = candidates[i][0];
+        const r: number = candidates[i][1];
+        layers[L][r][c] = new Tile(TileType.VIA, upper);    // 下层 → 上行
+        layers[upper][r][c] = new Tile(TileType.VIA, L);    // 上层 → 下行
+      }
+    }
   }
 }

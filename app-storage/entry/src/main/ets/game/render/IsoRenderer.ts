@@ -118,7 +118,7 @@ export function drawMap(
       if (tile === undefined) {
         continue;
       }
-      drawTile(ctx, tile.type, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, wallH);
+      drawTile(ctx, tile, layer, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, wallH);
     }
   }
 }
