@@ -9,6 +9,7 @@ const COLOR_LABEL_TEXT: string = '#22d3a8';
 const COLOR_LABEL_BG: string = '#0a0e1aaa';   // 半透明深底
 
 // 全屏纯色覆盖；alpha 0 不画，1 全黑
+// 用 save/restore + 显式 reset 双重保险，避免 ctx 状态泄漏到下一帧
 export function drawFade(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -19,12 +20,13 @@ export function drawFade(
     return;
   }
   const a: number = alpha > 1 ? 1 : alpha;
-  // 用 globalAlpha 切换，画完恢复
-  const prev: number = ctx.globalAlpha;
+  ctx.save();
   ctx.globalAlpha = a;
   ctx.fillStyle = COLOR_FADE;
   ctx.fillRect(0, 0, w, h);
-  ctx.globalAlpha = prev;
+  ctx.restore();
+  // 防 HarmonyOS Canvas save/restore 不可靠：显式锁回 1
+  ctx.globalAlpha = 1;
 }
 
 // Canvas 左上角层数标签 "L 0/2"

@@ -66,7 +66,11 @@ struct GamePage {
     const w: number = this.ctx.width;
     const h: number = this.ctx.height;
 
-    // 清屏铺底色
+    // 防御性重置 ctx 状态：HarmonyOS Canvas 的 globalAlpha 在 save/restore 上行为不稳，
+    // 强制每帧入口锁回 1，避免上一帧 fade 半透明残留导致清屏不彻底（视觉模糊/重影）
+    this.ctx.globalAlpha = 1;
+    // 双重清屏：clearRect 把像素归零，fillRect 再铺底色，确保彻底覆盖
+    this.ctx.clearRect(0, 0, w, h);
     this.ctx.fillStyle = this.BG_COLOR;
     this.ctx.fillRect(0, 0, w, h);
 

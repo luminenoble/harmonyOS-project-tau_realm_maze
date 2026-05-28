@@ -16,13 +16,7 @@ export enum EnginePhase {
   TRANSITION_IN = 3
 }
 
-// [DEBUG] 引擎实例全局计数器，定位"老引擎仍在跑"的泄漏问题
-let __engineInstanceSeq: number = 0;
-
 export class GameEngine {
-  // [DEBUG] 本实例编号，所有 log 带前缀方便区分新旧引擎
-  private readonly engineId: number = ++__engineInstanceSeq;
-  private readonly logTag: string = '[engine#' + this.engineId + ']';
   readonly map: MapManager;
   readonly player: Player;
 
@@ -46,7 +40,6 @@ export class GameEngine {
     this.phase = EnginePhase.IDLE;
     this.transitionT = 0;
     this.onTick = () => {};
-    console.info(this.logTag, 'ctor created');
   }
 
   setTickCallback(cb: TickCallback): void {
@@ -79,22 +72,17 @@ export class GameEngine {
   // 尝试朝指定方向移动；仅 IDLE 时接受输入
   tryMove(dCol: number, dRow: number): boolean {
     if (this.phase !== EnginePhase.IDLE) {
-      console.info(this.logTag, 'tryMove REJECT phase=', this.phase,
-        'transitionT=', this.transitionT);
       return false;
     }
     const tc: number = this.player.col + dCol;
     const tr: number = this.player.row + dRow;
     const tile: Tile | undefined = this.map.getTile(tc, tr, this._currentLayer);
     if (tile === undefined) {
-      console.info(this.logTag, 'tryMove REJECT out-of-bounds', tc, tr, 'L=', this._currentLayer);
       return false;
     }
     if (tile.type === TileType.WALL) {
-      console.info(this.logTag, 'tryMove REJECT wall at', tc, tr);
       return false;
     }
-    console.info(this.logTag, 'tryMove ACCEPT', dCol, dRow, '→', tc, tr);
     this.player.startMove(dCol, dRow);
     this.phase = EnginePhase.MOVING;
     this.startLoop();
@@ -103,7 +91,6 @@ export class GameEngine {
 
   // 推进一帧：根据当前 phase 分派
   private advance(): void {
-    const prevPhase: EnginePhase = this.phase;
     if (this.phase === EnginePhase.MOVING) {
       const stillAnimating: boolean = this.player.tick();
       if (!stillAnimating) {
@@ -127,7 +114,6 @@ export class GameEngine {
           this.player.col, this.player.row, this._currentLayer
         );
         if (tile !== undefined && tile.viaTarget >= 0) {
-          console.info(this.logTag, 'swap layer', this._currentLayer, '→', tile.viaTarget);
           this._currentLayer = tile.viaTarget;
         }
         this.phase = EnginePhase.TRANSITION_IN;
@@ -140,48 +126,24 @@ export class GameEngine {
         this.phase = EnginePhase.IDLE;
       }
     }
-    if (prevPhase !== this.phase) {
-      console.info(this.logTag, 'phase', prevPhase, '→', this.phase, 'T=', this.transitionT);
-    }
   }
 
   // 启停 tick 循环；只要不是 IDLE 就保持运行
   private startLoop(): void {
     if (this.intervalId !== -1) {
-      console.info(this.logTag, 'startLoop SKIP, already running id=', this.intervalId);
       return;
     }
-    // 用 local 捕获每个 interval 自己的 id，方便确认是否多 timer 同时跑
-    let localId: number = -1;
-    const handle: object = setInterval(() => {
-      // [DEBUG] 每个 interval 闭包带自己的 localId；若日志里出现 ≥2 个不同 id 高频打印
-      // 即可确认 timer 泄漏
-      this.tickFromLoop(localId);
-    }, this.TICK_MS) as object;
-    // setInterval 返回值可能是 number 或对象（HarmonyOS 行为待确认）
-    console.info(this.logTag, 'startLoop NEW handle=', handle,
-      'typeof=', typeof handle, 'isNumber=', (typeof handle === 'number'));
-    localId = handle as number;
-    this.intervalId = localId;
-  }
-
-  // 抽出 tick 主体，方便加日志且不让 setInterval 闭包过臃
-  private tickFromLoop(localId: number): void {
-    if (localId !== this.intervalId) {
-      // [DEBUG] 这条 log 一旦出现 = 旧 interval 没被 clear 干净
-      console.warn(this.logTag, 'GHOST TICK from id=', localId,
-        'but current id=', this.intervalId, 'phase=', this.phase);
-    }
-    this.advance();
-    this.onTick();
-    if (this.phase === EnginePhase.IDLE) {
-      this.stopLoop();
-    }
+    this.intervalId = setInterval(() => {
+      this.advance();
+      this.onTick();
+      if (this.phase === EnginePhase.IDLE) {
+        this.stopLoop();
+      }
+    }, this.TICK_MS);
   }
 
   private stopLoop(): void {
     if (this.intervalId !== -1) {
-      console.info(this.logTag, 'stopLoop clearInterval id=', this.intervalId);
       clearInterval(this.intervalId);
       this.intervalId = -1;
     }
@@ -189,7 +151,6 @@ export class GameEngine {
 
   // 页面销毁等场景强制停机；多次调用幂等
   stop(): void {
-    console.info(this.logTag, 'stop() called, phase=', this.phase);
     this.stopLoop();
     this.phase = EnginePhase.IDLE;
     this.transitionT = 0;
