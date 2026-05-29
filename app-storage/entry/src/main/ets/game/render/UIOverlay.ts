@@ -9,6 +9,9 @@ const COLOR_LABEL_TEXT: string = '#22d3a8';
 const COLOR_LABEL_BG: string = '#0a0e1aaa';   // 半透明深底
 // 碎片角标
 const COLOR_FRAGMENT_TEXT: string = '#ffd166';
+// 重构警告：红色脉冲底 + 浅红字
+const COLOR_WARN_FILL: string = '#ff3030';
+const COLOR_WARN_TEXT: string = '#ffe0e0';
 
 // 全屏纯色覆盖；alpha 0 不画，1 全黑
 // 用 save/restore + 显式 reset 双重保险，避免 ctx 状态泄漏到下一帧
@@ -85,4 +88,37 @@ export function drawFragmentBadge(
   ctx.fillStyle = COLOR_FRAGMENT_TEXT;
   ctx.textBaseline = 'top';
   ctx.fillText(text, x + padX, y + padY);
+}
+
+// Day 6 重构警告：全屏红色 sin 脉冲 + 中央"信号重路由中..."文字
+// alpha 由 GameEngine.warnPulseAlpha 提供，介于 [0.15, 0.55] 区间（基础 0.35 ± 0.2）
+// 文字始终以 alpha=1 渲染，保证警告语义可读；避免随脉冲一起闪烁
+export function drawWarningOverlay(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  alpha: number
+): void {
+  if (alpha <= 0) {
+    return;
+  }
+  const a: number = alpha > 1 ? 1 : (alpha < 0 ? 0 : alpha);
+
+  // 1) 红色底
+  ctx.globalAlpha = a;
+  ctx.fillStyle = COLOR_WARN_FILL;
+  ctx.fillRect(0, 0, w, h);
+
+  // 2) 中央文字（不参与脉冲，alpha=1）
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = COLOR_WARN_TEXT;
+  ctx.font = '24px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('信号重路由中...', w / 2, h / 2);
+
+  // 3) 防 HarmonyOS Canvas 状态泄漏：显式还原
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.globalAlpha = 1;
 }

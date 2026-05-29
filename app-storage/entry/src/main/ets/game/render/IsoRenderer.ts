@@ -122,3 +122,60 @@ export function drawMap(
     }
   }
 }
+
+// Day 6：重构 PULSE 阶段的高亮叠加
+// opened cell（新开通道）→ 青绿菱形覆盖到地板位置
+// closed cell（新堵墙）→ 红色菱形覆盖到墙顶位置（-wallH 抬高，对齐 drawWall 顶面）
+// alpha 由 GameEngine.pulseAlpha 提供（1→0 渐隐）；alpha ≤ 0 直接跳过
+const COLOR_PULSE_OPEN: string = '#22d3a8';
+const COLOR_PULSE_CLOSE: string = '#ff6b6b';
+
+export function drawRestructurePulse(
+  ctx: CanvasRenderingContext2D,
+  cfg: IsoConfig,
+  layer: number,
+  openedCells: number[][],
+  closedCells: number[][],
+  alpha: number,
+  wallH: number
+): void {
+  if (alpha <= 0) {
+    return;
+  }
+  const a: number = alpha > 1 ? 1 : alpha;
+  ctx.globalAlpha = a;
+
+  // 新通道：地板层级，菱形铺满
+  ctx.fillStyle = COLOR_PULSE_OPEN;
+  for (let i = 0; i < openedCells.length; i++) {
+    const c: number = openedCells[i][0];
+    const r: number = openedCells[i][1];
+    const p: ScreenPoint = gridToScreen(c, r, layer, cfg);
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - cfg.tileHalfH);
+    ctx.lineTo(p.x + cfg.tileHalfW, p.y);
+    ctx.lineTo(p.x, p.y + cfg.tileHalfH);
+    ctx.lineTo(p.x - cfg.tileHalfW, p.y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // 新墙：抬高到墙顶位置
+  ctx.fillStyle = COLOR_PULSE_CLOSE;
+  for (let i = 0; i < closedCells.length; i++) {
+    const c: number = closedCells[i][0];
+    const r: number = closedCells[i][1];
+    const p: ScreenPoint = gridToScreen(c, r, layer, cfg);
+    const cy: number = p.y - wallH;
+    ctx.beginPath();
+    ctx.moveTo(p.x, cy - cfg.tileHalfH);
+    ctx.lineTo(p.x + cfg.tileHalfW, cy);
+    ctx.lineTo(p.x, cy + cfg.tileHalfH);
+    ctx.lineTo(p.x - cfg.tileHalfW, cy);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // 状态还原，防 HarmonyOS Canvas alpha 泄漏
+  ctx.globalAlpha = 1;
+}

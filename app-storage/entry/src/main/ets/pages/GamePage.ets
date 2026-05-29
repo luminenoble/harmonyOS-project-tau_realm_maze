@@ -4,8 +4,8 @@
 // Day 4：3 层迷宫 + Via 切层；Day 5：碎片拾取 / 逻辑门 / 科普 Dialog；Day 5 末：平板专用排版
 import { router } from '@kit.ArkUI';
 import { IsoConfig } from '../utils/IsoMath';
-import { drawMap } from '../game/render/IsoRenderer';
-import { drawFade } from '../game/render/UIOverlay';
+import { drawMap, drawRestructurePulse } from '../game/render/IsoRenderer';
+import { drawFade, drawWarningOverlay } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine } from '../game/core/GameEngine';
 
@@ -36,6 +36,8 @@ struct GamePage {
   @State currentLayer: number = 0;
   @State currentFragments: number = 0;
   @State currentFragmentTotal: number = 0;
+  // 距下一次动态重构剩余步数（Day 6）
+  @State stepsUntilRestructure: number = 20;
 
   // 页面入场：构造引擎与地图
   aboutToAppear(): void {
@@ -59,6 +61,7 @@ struct GamePage {
     this.currentLayer = 0;
     this.currentFragments = this.engine.currentFragments;
     this.currentFragmentTotal = this.engine.currentFragmentTotal;
+    this.stepsUntilRestructure = this.engine.stepsUntilRestructure;
     this.engine.setTickCallback(() => {
       const e: GameEngine = this.engine as GameEngine;
       // 转场 swap 后同步层号与本层碎片计数到 ArkUI
@@ -66,6 +69,11 @@ struct GamePage {
         this.currentLayer = e.currentLayer;
         this.currentFragments = e.currentFragments;
         this.currentFragmentTotal = e.currentFragmentTotal;
+      }
+      // 重构倒计时随每次 tick 同步（步数变化时触发 ArkUI 重绘）
+      const newRemain: number = e.stepsUntilRestructure;
+      if (this.stepsUntilRestructure !== newRemain) {
+        this.stepsUntilRestructure = newRemain;
       }
       this.renderMap();
     });
@@ -120,7 +128,16 @@ struct GamePage {
 
     drawMap(this.ctx, e.map, cfg, wallH, e.currentLayer, e.player, wallH * 0.6);
 
+    // Day 6 PULSE：opened / closed 改动 cell 高亮（仅 PULSE 阶段 alpha>0）
+    drawRestructurePulse(
+      this.ctx, cfg, e.currentLayer,
+      e.lastOpenedCells, e.lastClosedCells, e.pulseAlpha, wallH
+    );
+
     // 平板布局把 HUD 全部移到左侧 Column，Canvas 上不再叠 label / badge
+
+    // Day 6 WARN：红色脉冲底 + "信号重路由中..."（仅 WARN 阶段 alpha>0）
+    drawWarningOverlay(this.ctx, w, h, e.warnPulseAlpha);
 
     // 转场黑屏覆盖（最后画）
     drawFade(this.ctx, w, h, e.transitionAlpha);
@@ -191,6 +208,15 @@ struct GamePage {
       Text('◆ ' + this.currentFragments + ' / ' + this.currentFragmentTotal)
         .fontSize(20)
         .fontColor('#ffd166')
+        .margin({ top: 4, bottom: 24 })
+
+      // 重构倒计时（每 20 步触发一次局部重构）
+      Text('下一次重构')
+        .fontSize(12)
+        .fontColor('#5a7088')
+      Text(this.stepsUntilRestructure + ' 步')
+        .fontSize(20)
+        .fontColor('#ff9a40')
         .margin({ top: 4 })
 
       Blank()

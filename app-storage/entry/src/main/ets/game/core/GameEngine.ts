@@ -1,5 +1,5 @@
-// 游戏主循环：地图 + 玩家 + 状态机（IDLE / MOVING / TRANSITION_OUT / TRANSITION_IN）
-// Day 4：切层转场；Day 5：信号碎片拾取、GATE 阻挡、上行 VIA 锁定
+// 游戏主循环：地图 + 玩家 + 状态机
+// Day 4：切层转场；Day 5：碎片 / 逻辑门 / 上行 VIA 锁；Day 6：每 20 步动态重构
 
 import { MapManager } from './MapManager';
 import { Player } from './Player';
@@ -7,6 +7,8 @@ import { TileType, Tile } from '../types/TileType';
 import { GateLogic } from '../puzzle/GateLogic';
 import { ViaUnlock } from '../puzzle/ViaUnlock';
 import { pickFact } from '../data/ChipFacts';
+import { Restructurer, RestructureResult } from './Restructurer';
+import { Rng } from '../../utils/MazeGenerator';
 
 // tick 回调类型
 export type TickCallback = () => void;
@@ -18,8 +20,15 @@ export enum EnginePhase {
   IDLE = 0,
   MOVING = 1,
   TRANSITION_OUT = 2,
-  TRANSITION_IN = 3
+  TRANSITION_IN = 3,
+  RESTRUCTURE_WARN = 4,
+  RESTRUCTURE_PULSE = 5
 }
+
+// Day 6 重构参数
+const STEPS_PER_RESTRUCTURE: number = 20;
+const OPENS_PER_CYCLE: number = 2;
+const CLOSES_PER_CYCLE: number = 2;
 
 export class GameEngine {
   readonly map: MapManager;
@@ -34,11 +43,24 @@ export class GameEngine {
   // 转场进度每 tick 增量（0.05 → 20 tick ≈ 320ms 每阶段）
   private readonly TRANSITION_SPEED: number = 0.05;
 
+  // 重构动效进度（WARN 与 PULSE 复用同一变量）
+  private restructureT: number;
+  private readonly RESTRUCTURE_SPEED: number = 1.0 / 30;  // 30 tick ≈ 480ms
+
   // 每层已拾取碎片数 / 初始总数
   private _fragments: number[];
   private _fragmentTotals: number[];
   // 累计拾取计数，用于科普文本循环取
   private _pickedCount: number;
+  // 累计成功移动步数（跨层共享）；每 STEPS_PER_RESTRUCTURE 触发一次重构
+  private _stepCount: number;
+
+  // 上一轮重构改动的 cell 列表（PULSE 阶段渲染层用）
+  private _lastOpened: number[][];
+  private _lastClosed: number[][];
+
+  // 运行时 RNG：重构与未来动态系统共用
+  private _rng: Rng;
 
   private intervalId: number = -1;
   private onTick: TickCallback;
@@ -51,9 +73,15 @@ export class GameEngine {
     this._currentLayer = 0;
     this.phase = EnginePhase.IDLE;
     this.transitionT = 0;
+    this.restructureT = 0;
     this.onTick = () => {};
     this.onFragmentPicked = () => {};
     this._pickedCount = 0;
+    this._stepCount = 0;
+    this._lastOpened = [];
+    this._lastClosed = [];
+    // 用启动时间 + 起点扰动作 seed，避免每次重生 RNG 序列一致
+    this._rng = new Rng(Date.now() ^ ((startCol << 8) | startRow));
 
     // 统计每层 FRAGMENT 初始总数
     this._fragments = [];
@@ -92,8 +120,18 @@ export class GameEngine {
     return this._fragmentTotals[this._currentLayer];
   }
 
+  // 累计步数 + 距下一次重构的剩余步数（HUD 用）
+  get stepCount(): number {
+    return this._stepCount;
+  }
+
+  // 范围 [1, STEPS_PER_RESTRUCTURE]：触发后立刻 reset 到 STEPS_PER_RESTRUCTURE
+  get stepsUntilRestructure(): number {
+    const mod: number = this._stepCount % STEPS_PER_RESTRUCTURE;
+    return mod === 0 ? STEPS_PER_RESTRUCTURE : STEPS_PER_RESTRUCTURE - mod;
+  }
+
   // 转场覆盖层 alpha：0 = 不显示，1 = 全黑
-  // OUT 阶段 0→1；IN 阶段 1→0；其他阶段为 0
   get transitionAlpha(): number {
     if (this.phase === EnginePhase.TRANSITION_OUT) {
       return this.transitionT;
@@ -104,10 +142,41 @@ export class GameEngine {
     return 0;
   }
 
+  // 警告期红屏 sin 脉冲 alpha（仅 WARN 阶段非零）
+  // 基础 0.35 + 振幅 0.2·sin(t·π·4)，整段呈现 2 次脉冲
+  get warnPulseAlpha(): number {
+    if (this.phase !== EnginePhase.RESTRUCTURE_WARN) {
+      return 0;
+    }
+    return 0.35 + 0.2 * Math.sin(this.restructureT * Math.PI * 4);
+  }
+
+  // 改动 cell 高亮 alpha（仅 PULSE 阶段非零，1→0 渐隐）
+  get pulseAlpha(): number {
+    if (this.phase !== EnginePhase.RESTRUCTURE_PULSE) {
+      return 0;
+    }
+    return 1 - this.restructureT;
+  }
+
+  get lastOpenedCells(): number[][] {
+    return this._lastOpened;
+  }
+
+  get lastClosedCells(): number[][] {
+    return this._lastClosed;
+  }
+
   // 是否正在转场（用于 UI 决定是否禁用输入指示）
   isTransitioning(): boolean {
     return this.phase === EnginePhase.TRANSITION_OUT
         || this.phase === EnginePhase.TRANSITION_IN;
+  }
+
+  // 是否正在执行重构（WARN 或 PULSE）
+  isRestructuring(): boolean {
+    return this.phase === EnginePhase.RESTRUCTURE_WARN
+        || this.phase === EnginePhase.RESTRUCTURE_PULSE;
   }
 
   // 尝试朝指定方向移动；仅 IDLE 时接受输入
@@ -130,6 +199,7 @@ export class GameEngine {
     }
     this.player.startMove(dCol, dRow);
     this.phase = EnginePhase.MOVING;
+    this._stepCount++;
     this.startLoop();
     return true;
   }
@@ -160,17 +230,35 @@ export class GameEngine {
       if (this.transitionT >= 1) {
         this.transitionT = 1;
         this.phase = EnginePhase.IDLE;
+        // 切层完成后检查是否要触发重构（在新层上）
+        this.maybeStartRestructure();
+      }
+    } else if (this.phase === EnginePhase.RESTRUCTURE_WARN) {
+      this.restructureT += this.RESTRUCTURE_SPEED;
+      if (this.restructureT >= 1) {
+        this.restructureT = 1;
+        // WARN 末尾一次性 apply，紧接 PULSE
+        this.applyRestructure();
+        this.phase = EnginePhase.RESTRUCTURE_PULSE;
+        this.restructureT = 0;
+      }
+    } else if (this.phase === EnginePhase.RESTRUCTURE_PULSE) {
+      this.restructureT += this.RESTRUCTURE_SPEED;
+      if (this.restructureT >= 1) {
+        this.restructureT = 1;
+        this.phase = EnginePhase.IDLE;
       }
     }
   }
 
-  // 玩家移动结束：依次检测 FRAGMENT 拾取、VIA 切层
+  // 玩家移动结束：依次检测 FRAGMENT 拾取、VIA 切层；最后检查是否触发重构
   private onPlayerLanded(): void {
     const tile: Tile | undefined = this.map.getTile(
       this.player.col, this.player.row, this._currentLayer
     );
     if (tile === undefined) {
       this.phase = EnginePhase.IDLE;
+      this.maybeStartRestructure();
       return;
     }
 
@@ -181,12 +269,11 @@ export class GameEngine {
       this._fragments[this._currentLayer]++;
       this._pickedCount++;
       const count: number = this._fragments[this._currentLayer];
-      // 解锁检查：该层 GATE / 上行 VIA
       GateLogic.unlockAllInLayer(this.map, this._currentLayer, count);
       ViaUnlock.unlockAllInLayer(this.map, this._currentLayer, count);
-      // 弹科普
       this.onFragmentPicked(pickFact(this._pickedCount - 1));
       this.phase = EnginePhase.IDLE;
+      this.maybeStartRestructure();
       return;
     }
 
@@ -195,11 +282,44 @@ export class GameEngine {
       if (ViaUnlock.canTrigger(tile, this._currentLayer, this._fragments[this._currentLayer])) {
         this.phase = EnginePhase.TRANSITION_OUT;
         this.transitionT = 0;
+        // 切层期不触发重构，等 TRANSITION_IN 末尾再判
         return;
       }
     }
 
     this.phase = EnginePhase.IDLE;
+    this.maybeStartRestructure();
+  }
+
+  // 每 STEPS_PER_RESTRUCTURE 步触发一次：进入 WARN，由 advance 在 t→1 时 apply
+  private maybeStartRestructure(): void {
+    if (this._stepCount === 0) {
+      return;
+    }
+    if (this._stepCount % STEPS_PER_RESTRUCTURE !== 0) {
+      return;
+    }
+    this.phase = EnginePhase.RESTRUCTURE_WARN;
+    this.restructureT = 0;
+    this._lastOpened = [];
+    this._lastClosed = [];
+    this.startLoop();  // FRAGMENT 落点回 IDLE 后 loop 可能已停，重新拉起
+  }
+
+  // 调 Restructurer 应用一次重构，记录改动 cell 供 PULSE 渲染
+  private applyRestructure(): void {
+    const layer: Tile[][] = this.map.getLayer(this._currentLayer);
+    const result: RestructureResult = Restructurer.apply(
+      layer,
+      this.player.col,
+      this.player.row,
+      this._rng,
+      OPENS_PER_CYCLE,
+      CLOSES_PER_CYCLE,
+      this._fragments[this._currentLayer]
+    );
+    this._lastOpened = result.opened;
+    this._lastClosed = result.closed;
   }
 
   // 启停 tick 循环；只要不是 IDLE 就保持运行
@@ -228,5 +348,6 @@ export class GameEngine {
     this.stopLoop();
     this.phase = EnginePhase.IDLE;
     this.transitionT = 0;
+    this.restructureT = 0;
   }
 }

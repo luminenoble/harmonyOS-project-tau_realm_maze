@@ -300,10 +300,17 @@ export class MazeGenerator {
     }
   }
 
-  // BFS：从 (sc, sr) 出发的可达性掩码
-  // 通行规则：WALL / GATE 视为障碍；FLOOR / VIA / FRAGMENT 视为可走
-  // 用数组 + head 指针模拟队列，避免 shift 的 O(n)
-  private static bfsReachable(layer: Tile[][], sc: number, sr: number): boolean[][] {
+  // BFS：从 (sc, sr) 出发的可达性掩码（公开供 Restructurer 复用）
+  // 通行规则：WALL 一律阻挡；GATE 视 gatesBlock 与 tile.locked 决定：
+  //   - gatesBlock=true（默认，初始生成时全部 locked，行为兼容旧版）：locked GATE 当墙
+  //   - gatesBlock=false：GATE 一律视为可通行（用于"假设门都能开"的连通性预判）
+  // 队列用数组 + head 指针，避免 shift O(n)
+  static bfsReachable(
+    layer: Tile[][],
+    sc: number,
+    sr: number,
+    gatesBlock: boolean = true
+  ): boolean[][] {
     const rows: number = layer.length;
     const cols: number = layer[0].length;
     const visited: boolean[][] = [];
@@ -317,7 +324,11 @@ export class MazeGenerator {
     if (sr < 0 || sr >= rows || sc < 0 || sc >= cols) {
       return visited;
     }
-    if (!MazeGenerator.isPassableForBfs(layer[sr][sc])) {
+    const start: Tile = layer[sr][sc];
+    if (start.type === TileType.WALL) {
+      return visited;
+    }
+    if (gatesBlock && start.type === TileType.GATE && start.locked) {
       return visited;
     }
 
@@ -339,7 +350,11 @@ export class MazeGenerator {
         if (visited[nr][nc]) {
           continue;
         }
-        if (!MazeGenerator.isPassableForBfs(layer[nr][nc])) {
+        const t: Tile = layer[nr][nc];
+        if (t.type === TileType.WALL) {
+          continue;
+        }
+        if (gatesBlock && t.type === TileType.GATE && t.locked) {
           continue;
         }
         visited[nr][nc] = true;
@@ -348,11 +363,6 @@ export class MazeGenerator {
       }
     }
     return visited;
-  }
-
-  // BFS 通行判定：WALL / GATE 拦住；其余可走
-  private static isPassableForBfs(tile: Tile): boolean {
-    return tile.type !== TileType.WALL && tile.type !== TileType.GATE;
   }
 
   // 是否存在至少 1 个非起点的 visited FLOOR cell（用于 placeGates 校验）

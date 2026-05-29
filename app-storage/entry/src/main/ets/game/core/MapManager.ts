@@ -58,6 +58,12 @@ export class MapManager {
     return this.layers[layer][row][col];
   }
 
+  // 直接拿到某一层的 Tile[][]，供 Restructurer 等需要原地修改的子系统使用
+  // 调用方负责保持外圈外墙、不破坏整体连通性（由 BFS 校验保障）
+  getLayer(layer: number): Tile[][] {
+    return this.layers[layer];
+  }
+
   // 行优先遍历指定层（painter's 排序由 renderer 负责）
   forEach(cb: TileVisitor, layer: number = 0): void {
     if (layer < 0 || layer >= this.layerCount) {
