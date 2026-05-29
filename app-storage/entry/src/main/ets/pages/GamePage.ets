@@ -1,9 +1,11 @@
-// 游戏主页面：Canvas 宿主 + 滑动手势输入 + 引擎驱动重绘
-// Day 4：3 层迷宫 + Via 切层；Day 5：碎片拾取 / 逻辑门 / 科普 Dialog
+// 游戏主页面：平板专用横屏布局
+// 左侧固定宽度信息栏（返回 / 标题 / Layer / 碎片 / 重生）
+// 右侧 Stack：Canvas 全屏铺底 + 右下角浮动 D-Pad
+// Day 4：3 层迷宫 + Via 切层；Day 5：碎片拾取 / 逻辑门 / 科普 Dialog；Day 5 末：平板专用排版
 import { router } from '@kit.ArkUI';
 import { IsoConfig } from '../utils/IsoMath';
 import { drawMap } from '../game/render/IsoRenderer';
-import { drawFade, drawLayerLabel, drawFragmentBadge } from '../game/render/UIOverlay';
+import { drawFade } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine } from '../game/core/GameEngine';
 
@@ -18,6 +20,8 @@ struct GamePage {
   private readonly GRID_COLS: number = 13;
   private readonly GRID_ROWS: number = 13;
   private readonly BG_COLOR: string = '#0a0e1a';
+  // 左侧 HUD 栏背景色（略亮于主背景，分隔出"控制台"质感）
+  private readonly SIDEBAR_BG: string = '#0d1424';
 
   // 多层堆叠预留：Day 4 实际启用 3 层，layout 锚定与之一致
   private readonly TARGET_LAYERS: number = 3;
@@ -66,7 +70,6 @@ struct GamePage {
       this.renderMap();
     });
     this.engine.setFragmentPickedCallback((factText: string) => {
-      // 拾取后立即同步 HUD（在 tick 回调之前先更新）
       const e: GameEngine = this.engine as GameEngine;
       this.currentFragments = e.currentFragments;
       this.currentFragmentTotal = e.currentFragmentTotal;
@@ -82,22 +85,22 @@ struct GamePage {
     });
   }
 
-  // 渲染入口：清屏 → 自适应瓦片尺寸 → painter's 顺序绘制 → 覆盖层
+  // 渲染入口：清屏 → 自适应瓦片尺寸 → painter's 顺序绘制 → 转场覆盖
+  // Canvas 区域已是"右侧无侧栏"的纯游戏区，halfW 上限放宽到 40 以利大屏
   private renderMap(): void {
     const w: number = this.ctx.width;
     const h: number = this.ctx.height;
 
     // 防御性重置 ctx 状态：HarmonyOS Canvas 的 globalAlpha 在 save/restore 上行为不稳，
-    // 强制每帧入口锁回 1，避免上一帧 fade 半透明残留导致清屏不彻底（视觉模糊/重影）
+    // 强制每帧入口锁回 1，避免上一帧 fade 半透明残留导致清屏不彻底
     this.ctx.globalAlpha = 1;
-    // 双重清屏：clearRect 把像素归零，fillRect 再铺底色，确保彻底覆盖
     this.ctx.clearRect(0, 0, w, h);
     this.ctx.fillStyle = this.BG_COLOR;
     this.ctx.fillRect(0, 0, w, h);
 
-    // 自适应瓦片半宽
+    // 自适应瓦片半宽：上限 40 vp（平板大屏视觉更舒展），下限 8 vp 防小窗压扁
     const maxHalfW: number = Math.floor((w - 40) / (this.GRID_COLS + this.GRID_ROWS));
-    const halfW: number = Math.min(28, Math.max(8, maxHalfW));
+    const halfW: number = Math.min(40, Math.max(8, maxHalfW));
     const halfH: number = Math.floor(halfW / 2);
     // 墙高降到 0.45 倍瓦片半宽，露出后排路面，仍保留立体感
     const wallH: number = Math.max(4, Math.floor(halfW * 0.45));
@@ -115,14 +118,11 @@ struct GamePage {
     }
     const e: GameEngine = this.engine as GameEngine;
 
-    // 渲染当前层（不渲染其他层，Day 4 简化处理）
     drawMap(this.ctx, e.map, cfg, wallH, e.currentLayer, e.player, wallH * 0.6);
 
-    // Canvas 左上角层数小标签 + 右侧碎片角标
-    drawLayerLabel(this.ctx, e.currentLayer, this.TARGET_LAYERS - 1, 12, 12);
-    drawFragmentBadge(this.ctx, e.currentFragments, e.currentFragmentTotal, 12, 12 + 28);
+    // 平板布局把 HUD 全部移到左侧 Column，Canvas 上不再叠 label / badge
 
-    // 转场黑屏覆盖（最后画，覆盖所有内容）
+    // 转场黑屏覆盖（最后画）
     drawFade(this.ctx, w, h, e.transitionAlpha);
   }
 
@@ -150,43 +150,104 @@ struct GamePage {
     (this.engine as GameEngine).tryMove(dCol, dRow);
   }
 
-  build() {
+  // 左侧 HUD 信息栏：标题 / 层数 / 碎片 / 操作按钮
+  @Builder
+  Sidebar() {
     Column() {
-      // 顶部 HUD：返回 + 标题(含层号 + 碎片) + 重生
+      Button('← 返回')
+        .fontSize(14)
+        .backgroundColor('#1a2238')
+        .fontColor('#22d3a8')
+        .height(40)
+        .width('100%')
+        .onClick(() => {
+          router.back();
+        })
+
+      // 标题区
+      Text('TauRealmMaze')
+        .fontSize(22)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#22d3a8')
+        .margin({ top: 36, bottom: 4 })
+      Text('韬略 · 芯片迷宫')
+        .fontSize(12)
+        .fontColor('#5a7088')
+        .margin({ bottom: 32 })
+
+      // 当前层数
+      Text('当前层')
+        .fontSize(12)
+        .fontColor('#5a7088')
+      Text('Layer ' + this.currentLayer + ' / ' + (this.TARGET_LAYERS - 1))
+        .fontSize(20)
+        .fontColor('#22d3a8')
+        .margin({ top: 4, bottom: 24 })
+
+      // 当前层碎片计数
+      Text('信号碎片')
+        .fontSize(12)
+        .fontColor('#5a7088')
+      Text('◆ ' + this.currentFragments + ' / ' + this.currentFragmentTotal)
+        .fontSize(20)
+        .fontColor('#ffd166')
+        .margin({ top: 4 })
+
+      Blank()
+
+      Button('↻ 重生本局')
+        .fontSize(14)
+        .backgroundColor('#1a2238')
+        .fontColor('#22d3a8')
+        .height(40)
+        .width('100%')
+        .onClick(() => {
+          this.initEngine();
+          this.renderMap();
+        })
+    }
+    .width(240)
+    .height('100%')
+    .padding({ left: 20, right: 20, top: 24, bottom: 24 })
+    .alignItems(HorizontalAlign.Start)
+    .backgroundColor(this.SIDEBAR_BG)
+  }
+
+  // 右下角浮动 D-Pad（覆盖在 Canvas 之上）
+  @Builder
+  DPad() {
+    Column() {
       Row() {
-        Button('← 返回')
-          .fontSize(14)
-          .backgroundColor('#1a2238')
-          .fontColor('#22d3a8')
-          .height(36)
-          .onClick(() => {
-            router.back();
-          })
-
-        Text('Layer ' + this.currentLayer + '/' + (this.TARGET_LAYERS - 1)
-            + ' · ◆ ' + this.currentFragments + '/' + this.currentFragmentTotal)
-          .fontSize(15)
-          .fontColor('#22d3a8')
-          .margin({ left: 16 })
-
-        Blank()
-
-        Button('↻ 重生')
-          .fontSize(14)
-          .backgroundColor('#1a2238')
-          .fontColor('#22d3a8')
-          .height(36)
-          .onClick(() => {
-            this.initEngine();
-            this.renderMap();
-          })
+        Button('↑').width(56).height(48).fontSize(20)
+          .backgroundColor('#1a2238dd').fontColor('#22d3a8')
+          .onClick(() => { this.handleDpad(0, -1); })
       }
-      .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-      .justifyContent(FlexAlign.Start)
+      .justifyContent(FlexAlign.Center)
 
-      // Canvas 渲染区，叠加滑动手势
-      Stack() {
+      Row() {
+        Button('←').width(56).height(48).fontSize(20)
+          .backgroundColor('#1a2238dd').fontColor('#22d3a8')
+          .onClick(() => { this.handleDpad(-1, 0); })
+        Button('↓').width(56).height(48).fontSize(20)
+          .backgroundColor('#1a2238dd').fontColor('#22d3a8')
+          .margin({ left: 8, right: 8 })
+          .onClick(() => { this.handleDpad(0, 1); })
+        Button('→').width(56).height(48).fontSize(20)
+          .backgroundColor('#1a2238dd').fontColor('#22d3a8')
+          .onClick(() => { this.handleDpad(1, 0); })
+      }
+      .margin({ top: 8 })
+    }
+    .margin({ right: 40, bottom: 40 })
+  }
+
+  build() {
+    Row() {
+      // 左：HUD 信息栏（固定宽度）
+      this.Sidebar()
+
+      // 右：游戏区（Canvas + 右下 DPad 浮层）
+      Stack({ alignContent: Alignment.BottomEnd }) {
         Canvas(this.ctx)
           .width('100%')
           .height('100%')
@@ -194,44 +255,17 @@ struct GamePage {
           .onReady(() => {
             this.renderMap();
           })
+
+        this.DPad()
       }
-      .width('100%')
       .layoutWeight(1)
+      .height('100%')
       .gesture(
         PanGesture({ direction: PanDirection.All, distance: 10 })
           .onActionEnd((event: GestureEvent) => {
             this.handleSwipe(event.offsetX, event.offsetY);
           })
       )
-
-      // 底部虚拟方向键（模拟器测试方便；真机上滑动也可用）
-      Column() {
-        Row() {
-          Button('↑').width(48).height(40).fontSize(18)
-            .backgroundColor('#1a2238').fontColor('#22d3a8')
-            .onClick(() => { this.handleDpad(0, -1); })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-
-        Row() {
-          Button('←').width(48).height(40).fontSize(18)
-            .backgroundColor('#1a2238').fontColor('#22d3a8')
-            .onClick(() => { this.handleDpad(-1, 0); })
-          Button('↓').width(48).height(40).fontSize(18)
-            .backgroundColor('#1a2238').fontColor('#22d3a8')
-            .margin({ left: 12, right: 12 })
-            .onClick(() => { this.handleDpad(0, 1); })
-          Button('→').width(48).height(40).fontSize(18)
-            .backgroundColor('#1a2238').fontColor('#22d3a8')
-            .onClick(() => { this.handleDpad(1, 0); })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-        .margin({ top: 6 })
-      }
-      .width('100%')
-      .padding({ top: 12, bottom: 24 })
     }
     .width('100%')
     .height('100%')

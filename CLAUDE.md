@@ -11,7 +11,7 @@
 | 开发语言 | ArkTS |
 | UI 框架 | ArkUI（Stage 模型） |
 | 渲染 | Canvas 2D API（实现伪 3D 等距视角） |
-| 运行平台 | HarmonyOS 5.x（手机） |
+| 运行平台 | HarmonyOS 5.x（**平板专用**，Day 5 末切换后不再适配手机） |
 | 构建工具 | DevEco Studio（Windows，编译打包） |
 | AI 辅助 | Claude Code（WSL2 Ubuntu，代码编写/审查） |
 

@@ -76,6 +76,8 @@
 - [x] 简单文本弹窗（ArkUI AlertDialog）：拾取碎片时显示芯片知识一句话科普
 - [x] 验收标准：收集碎片 → 解锁逻辑门 → 通向下一区域，流程完整
 - [x] 附加：`ChipFacts.ts` 12 条科普；Tile 增 `locked` 字段；HUD 顶栏+Canvas 角标双源显示「Layer/碎片」
+- [x] 修复：GATE 随机位置导致死锁 → BFS 校验 + 强制 1 碎片在 pre-GATE 区（`docs/day5/day5-fixes.md`）
+- [x] 平台切换：从手机布局切到**平板专用横屏**（左侧 HUD 栏 + 右下浮动 D-Pad），不再适配手机（`docs/day5/day5-tablet.md`）
 
 ---
 
