@@ -174,11 +174,91 @@ export class MazeGenerator {
       }
 
       // 阶段 4：写回 VIA 标记
+      // Day 5 起：下层→上行 VIA 默认锁定（需当前层碎片全收集才解锁）；上层→下行 VIA 不锁
       for (let i = 0; i < k; i++) {
         const c: number = candidates[i][0];
         const r: number = candidates[i][1];
-        layers[L][r][c] = new Tile(TileType.VIA, upper);    // 下层 → 上行
-        layers[upper][r][c] = new Tile(TileType.VIA, L);    // 上层 → 下行
+        layers[L][r][c] = new Tile(TileType.VIA, upper, true);     // 下层 → 上行（locked）
+        layers[upper][r][c] = new Tile(TileType.VIA, L, false);    // 上层 → 下行（unlocked）
+      }
+    }
+  }
+
+  // 为每层放置信号碎片（FRAGMENT）
+  // 候选：FLOOR cell（排除外圈、起点 (1,1)、已是 VIA/GATE）
+  // 数量不足时降到实际可用数（小概率）
+  static placeFragments(layers: Tile[][][], rng: Rng, perLayer: number): void {
+    const layerCount: number = layers.length;
+    if (layerCount === 0) {
+      return;
+    }
+    const rows: number = layers[0].length;
+    const cols: number = layers[0][0].length;
+
+    for (let L = 0; L < layerCount; L++) {
+      const candidates: number[][] = [];
+      for (let r = 1; r < rows - 1; r++) {
+        for (let c = 1; c < cols - 1; c++) {
+          if (c === 1 && r === 1) {
+            continue;
+          }
+          if (layers[L][r][c].type === TileType.FLOOR) {
+            candidates.push([c, r]);
+          }
+        }
+      }
+
+      const k: number = Math.min(perLayer, candidates.length);
+      // Fisher-Yates 前缀洗牌
+      for (let i = 0; i < k; i++) {
+        const j: number = i + rng.nextInt(candidates.length - i);
+        const tmp: number[] = candidates[i];
+        candidates[i] = candidates[j];
+        candidates[j] = tmp;
+      }
+      for (let i = 0; i < k; i++) {
+        const c: number = candidates[i][0];
+        const r: number = candidates[i][1];
+        layers[L][r][c] = new Tile(TileType.FRAGMENT);
+      }
+    }
+  }
+
+  // 为每层放置逻辑门（GATE，默认 locked）
+  // 候选：FLOOR cell（排除外圈、起点、已是 VIA/GATE/FRAGMENT）
+  // 不做路径分析；13×13 上随机分布配合"阈值 1 碎片"的解锁条件，玩家几乎不会被卡死
+  static placeGates(layers: Tile[][][], rng: Rng, perLayer: number): void {
+    const layerCount: number = layers.length;
+    if (layerCount === 0) {
+      return;
+    }
+    const rows: number = layers[0].length;
+    const cols: number = layers[0][0].length;
+
+    for (let L = 0; L < layerCount; L++) {
+      const candidates: number[][] = [];
+      for (let r = 1; r < rows - 1; r++) {
+        for (let c = 1; c < cols - 1; c++) {
+          if (c === 1 && r === 1) {
+            continue;
+          }
+          if (layers[L][r][c].type === TileType.FLOOR) {
+            candidates.push([c, r]);
+          }
+        }
+      }
+
+      const k: number = Math.min(perLayer, candidates.length);
+      for (let i = 0; i < k; i++) {
+        const j: number = i + rng.nextInt(candidates.length - i);
+        const tmp: number[] = candidates[i];
+        candidates[i] = candidates[j];
+        candidates[j] = tmp;
+      }
+      for (let i = 0; i < k; i++) {
+        const c: number = candidates[i][0];
+        const r: number = candidates[i][1];
+        layers[L][r][c] = new Tile(TileType.GATE, -1, true);
       }
     }
   }

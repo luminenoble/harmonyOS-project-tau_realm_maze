@@ -9,6 +9,10 @@ export type TileVisitor = (tile: Tile, col: number, row: number) => void;
 
 // 每对相邻层放置的 Via 数量（CLAUDE.md MVP 规定 2-3 个/层）
 const VIAS_PER_PAIR: number = 2;
+// 每层信号碎片数（Day 5 起，CLAUDE.md MVP 规定 3 个/层）
+const FRAGMENTS_PER_LAYER: number = 3;
+// 每层逻辑门数（Day 5，MVP 阶段 1 个/层）
+const GATES_PER_LAYER: number = 1;
 
 export class MapManager {
   readonly cols: number;
@@ -34,8 +38,11 @@ export class MapManager {
       this.layers.push(MazeGenerator.generate(cols, rows, layerSeed));
     }
 
-    // 用主 Rng 继续派生 Via 放置的随机性
+    // 用主 Rng 继续派生 Via / 碎片 / 逻辑门 放置的随机性
+    // 顺序：VIA → FRAGMENT → GATE。后两步在已有特殊 tile 上自动跳过（仅在 FLOOR 上放置）
     MazeGenerator.placeVias(this.layers, masterRng, VIAS_PER_PAIR);
+    MazeGenerator.placeFragments(this.layers, masterRng, FRAGMENTS_PER_LAYER);
+    MazeGenerator.placeGates(this.layers, masterRng, GATES_PER_LAYER);
   }
 
   // 越界返回 undefined；层号越界同样返回 undefined

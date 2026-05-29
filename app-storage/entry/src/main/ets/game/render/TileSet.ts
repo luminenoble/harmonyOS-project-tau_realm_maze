@@ -15,12 +15,15 @@ const COLOR_WALL_RIGHT: string = '#6a4f1e';     // 暗金/古铜
 const COLOR_WALL_LEFT: string = '#2a1e0a';      // 近黑棕
 const COLOR_WALL_STROKE: string = '#0a0e1a';
 
-// 占位色（Day 5 进一步精化）
-const COLOR_VIA_UP: string = '#5ec0ff';   // 亮蓝：上行通孔
-const COLOR_VIA_DOWN: string = '#2a78c8'; // 暗蓝：下行通孔
-const COLOR_VIA_RING: string = '#1a4a7a'; // VIA 边圈
-const COLOR_GATE: string = '#ff6b6b';     // 红：逻辑门
-const COLOR_FRAGMENT: string = '#ffd166'; // 黄：信号碎片
+// VIA / GATE / FRAGMENT 色板
+const COLOR_VIA_UP: string = '#5ec0ff';        // 亮蓝：已解锁上行通孔
+const COLOR_VIA_DOWN: string = '#2a78c8';      // 暗蓝：下行通孔
+const COLOR_VIA_LOCKED: string = '#5a5a5a';    // 灰：上行 VIA 锁定
+const COLOR_VIA_RING: string = '#1a4a7a';      // VIA 边圈
+const COLOR_VIA_RING_LOCKED: string = '#8a2020'; // 锁定 VIA 暗红警示圈
+const COLOR_GATE_LOCKED: string = '#d63b3b';   // 红：锁定逻辑门
+const COLOR_GATE_UNLOCKED: string = '#22d3a8'; // 青绿：已解锁门（淡色提示边框）
+const COLOR_FRAGMENT: string = '#ffd166';      // 黄：信号碎片
 
 const LINE_WIDTH: number = 1;
 
@@ -132,24 +135,25 @@ function drawMarker(
 }
 
 // VIA 渲染：地板 + 方向感知三角箭头
-// up=true 表示上行（指向更高层号），三角朝上 + 亮蓝
-// up=false 表示下行，三角朝下 + 暗蓝
+// up=true 表示上行（指向更高层号），三角朝上 + 亮蓝（锁定时灰 + 暗红圈）
+// up=false 表示下行，三角朝下 + 暗蓝（始终不锁）
 export function drawVia(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
   halfW: number,
   halfH: number,
-  up: boolean
+  up: boolean,
+  locked: boolean
 ): void {
   drawFloor(ctx, cx, cy, halfW, halfH);
 
-  // 边圈：方便玩家在远处也能识别 VIA
+  // 边圈：方便玩家在远处也能识别 VIA；锁定时换暗红
   const ringR: number = Math.max(2, halfW * 0.55);
   ctx.beginPath();
   ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
   ctx.lineWidth = 1.2;
-  ctx.strokeStyle = COLOR_VIA_RING;
+  ctx.strokeStyle = locked ? COLOR_VIA_RING_LOCKED : COLOR_VIA_RING;
   ctx.stroke();
 
   // 三角：尺寸约 cell 内切，朝向由 up 决定
@@ -166,20 +170,49 @@ export function drawVia(
     ctx.lineTo(cx - triW, cy - triH / 2);
   }
   ctx.closePath();
-  ctx.fillStyle = up ? COLOR_VIA_UP : COLOR_VIA_DOWN;
+  if (locked) {
+    ctx.fillStyle = COLOR_VIA_LOCKED;
+  } else {
+    ctx.fillStyle = up ? COLOR_VIA_UP : COLOR_VIA_DOWN;
+  }
   ctx.fill();
 }
 
-// GATE 占位：地板 + 红色标识（Day 5 替换为门图形 + 状态）
+// GATE 渲染：地板 + 横向三道栅栏 + 中心锁/对号
+// locked=true：红栅栏 + 锁状方块；locked=false：青绿栅栏 + 圆点（已解锁提示）
 export function drawGate(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
   halfW: number,
-  halfH: number
+  halfH: number,
+  locked: boolean
 ): void {
   drawFloor(ctx, cx, cy, halfW, halfH);
-  drawMarker(ctx, cx, cy, halfW, halfH, COLOR_GATE);
+  const color: string = locked ? COLOR_GATE_LOCKED : COLOR_GATE_UNLOCKED;
+
+  // 三道横栅栏：在 cell 内沿垂直方向均布
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1.5, halfH * 0.18);
+  const barW: number = halfW * 0.7;
+  for (let i = -1; i <= 1; i++) {
+    const y: number = cy + i * halfH * 0.45;
+    ctx.beginPath();
+    ctx.moveTo(cx - barW, y);
+    ctx.lineTo(cx + barW, y);
+    ctx.stroke();
+  }
+
+  // 中心标识：锁定一个实心小方块（锁体），解锁后改为空心圆（钥匙孔）
+  ctx.fillStyle = color;
+  const cs: number = Math.max(3, halfW * 0.18);
+  if (locked) {
+    ctx.fillRect(cx - cs, cy - cs, cs * 2, cs * 2);
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, cy, cs, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 // FRAGMENT 占位：地板 + 黄色标识（Day 5 替换为闪烁碎片）
@@ -216,10 +249,10 @@ export function drawTile(
       drawWall(ctx, cx, cy, halfW, halfH, wallH);
       break;
     case TileType.VIA:
-      drawVia(ctx, cx, cy, halfW, halfH, tile.viaTarget > currentLayer);
+      drawVia(ctx, cx, cy, halfW, halfH, tile.viaTarget > currentLayer, tile.locked);
       break;
     case TileType.GATE:
-      drawGate(ctx, cx, cy, halfW, halfH);
+      drawGate(ctx, cx, cy, halfW, halfH, tile.locked);
       break;
     case TileType.FRAGMENT:
       drawFragment(ctx, cx, cy, halfW, halfH);

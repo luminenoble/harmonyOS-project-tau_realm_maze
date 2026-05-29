@@ -13,12 +13,15 @@ export enum TileType {
 // 单个瓦片数据
 // viaTarget 仅 VIA 类型使用，记录踩上去要传送到的层号
 // 用 -1 哨兵值避免可选字段 ?: 在 ArkTS 严格模式下的不确定性
+// locked Day 5 起：GATE 默认 true（需碎片解锁）；上行 VIA 默认 true、下行 VIA 默认 false
 export class Tile {
   type: TileType;
   viaTarget: number;
+  locked: boolean;
 
-  constructor(type: TileType, viaTarget: number = -1) {
+  constructor(type: TileType, viaTarget: number = -1, locked: boolean = false) {
     this.type = type;
     this.viaTarget = viaTarget;
+    this.locked = locked;
   }
 }

@@ -1,9 +1,9 @@
 // 游戏主页面：Canvas 宿主 + 滑动手势输入 + 引擎驱动重绘
-// Day 4：3 层迷宫 + Via 切层转场 + HUD 层数指示
+// Day 4：3 层迷宫 + Via 切层；Day 5：碎片拾取 / 逻辑门 / 科普 Dialog
 import { router } from '@kit.ArkUI';
 import { IsoConfig } from '../utils/IsoMath';
 import { drawMap } from '../game/render/IsoRenderer';
-import { drawFade, drawLayerLabel } from '../game/render/UIOverlay';
+import { drawFade, drawLayerLabel, drawFragmentBadge } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine } from '../game/core/GameEngine';
 
@@ -28,8 +28,10 @@ struct GamePage {
   // 引擎实例：aboutToAppear 构造，aboutToDisappear 停机
   private engine: GameEngine | null = null;
 
-  // 顶部 HUD 显示用层号；tick 回调内同步以触发 ArkUI 文本刷新
+  // HUD 显示状态；tick 回调内同步以触发 ArkUI 文本刷新
   @State currentLayer: number = 0;
+  @State currentFragments: number = 0;
+  @State currentFragmentTotal: number = 0;
 
   // 页面入场：构造引擎与地图
   aboutToAppear(): void {
@@ -51,13 +53,32 @@ struct GamePage {
     const map: MapManager = new MapManager(this.GRID_COLS, this.GRID_ROWS, this.TARGET_LAYERS);
     this.engine = new GameEngine(map, 1, 1);
     this.currentLayer = 0;
+    this.currentFragments = this.engine.currentFragments;
+    this.currentFragmentTotal = this.engine.currentFragmentTotal;
     this.engine.setTickCallback(() => {
       const e: GameEngine = this.engine as GameEngine;
-      // 转场 swap 后同步层号到 ArkUI Text
+      // 转场 swap 后同步层号与本层碎片计数到 ArkUI
       if (this.currentLayer !== e.currentLayer) {
         this.currentLayer = e.currentLayer;
+        this.currentFragments = e.currentFragments;
+        this.currentFragmentTotal = e.currentFragmentTotal;
       }
       this.renderMap();
+    });
+    this.engine.setFragmentPickedCallback((factText: string) => {
+      // 拾取后立即同步 HUD（在 tick 回调之前先更新）
+      const e: GameEngine = this.engine as GameEngine;
+      this.currentFragments = e.currentFragments;
+      this.currentFragmentTotal = e.currentFragmentTotal;
+      AlertDialog.show({
+        title: '信号碎片 +1',
+        message: factText,
+        autoCancel: true,
+        confirm: {
+          value: '继续',
+          action: () => {}
+        }
+      });
     });
   }
 
@@ -97,8 +118,9 @@ struct GamePage {
     // 渲染当前层（不渲染其他层，Day 4 简化处理）
     drawMap(this.ctx, e.map, cfg, wallH, e.currentLayer, e.player, wallH * 0.6);
 
-    // Canvas 左上角层数小标签
+    // Canvas 左上角层数小标签 + 右侧碎片角标
     drawLayerLabel(this.ctx, e.currentLayer, this.TARGET_LAYERS - 1, 12, 12);
+    drawFragmentBadge(this.ctx, e.currentFragments, e.currentFragmentTotal, 12, 12 + 28);
 
     // 转场黑屏覆盖（最后画，覆盖所有内容）
     drawFade(this.ctx, w, h, e.transitionAlpha);
@@ -130,7 +152,7 @@ struct GamePage {
 
   build() {
     Column() {
-      // 顶部 HUD：返回 + 标题(含层号) + 重生
+      // 顶部 HUD：返回 + 标题(含层号 + 碎片) + 重生
       Row() {
         Button('← 返回')
           .fontSize(14)
@@ -141,8 +163,9 @@ struct GamePage {
             router.back();
           })
 
-        Text('TauRealmMaze · Layer ' + this.currentLayer + '/' + (this.TARGET_LAYERS - 1))
-          .fontSize(16)
+        Text('Layer ' + this.currentLayer + '/' + (this.TARGET_LAYERS - 1)
+            + ' · ◆ ' + this.currentFragments + '/' + this.currentFragmentTotal)
+          .fontSize(15)
           .fontColor('#22d3a8')
           .margin({ left: 16 })
 
