@@ -184,49 +184,10 @@ export class MazeGenerator {
     }
   }
 
-  // 为每层放置信号碎片（FRAGMENT）
-  // 候选：FLOOR cell（排除外圈、起点 (1,1)、已是 VIA/GATE）
-  // 数量不足时降到实际可用数（小概率）
-  static placeFragments(layers: Tile[][][], rng: Rng, perLayer: number): void {
-    const layerCount: number = layers.length;
-    if (layerCount === 0) {
-      return;
-    }
-    const rows: number = layers[0].length;
-    const cols: number = layers[0][0].length;
-
-    for (let L = 0; L < layerCount; L++) {
-      const candidates: number[][] = [];
-      for (let r = 1; r < rows - 1; r++) {
-        for (let c = 1; c < cols - 1; c++) {
-          if (c === 1 && r === 1) {
-            continue;
-          }
-          if (layers[L][r][c].type === TileType.FLOOR) {
-            candidates.push([c, r]);
-          }
-        }
-      }
-
-      const k: number = Math.min(perLayer, candidates.length);
-      // Fisher-Yates 前缀洗牌
-      for (let i = 0; i < k; i++) {
-        const j: number = i + rng.nextInt(candidates.length - i);
-        const tmp: number[] = candidates[i];
-        candidates[i] = candidates[j];
-        candidates[j] = tmp;
-      }
-      for (let i = 0; i < k; i++) {
-        const c: number = candidates[i][0];
-        const r: number = candidates[i][1];
-        layers[L][r][c] = new Tile(TileType.FRAGMENT);
-      }
-    }
-  }
-
-  // 为每层放置逻辑门（GATE，默认 locked）
-  // 候选：FLOOR cell（排除外圈、起点、已是 VIA/GATE/FRAGMENT）
-  // 不做路径分析；13×13 上随机分布配合"阈值 1 碎片"的解锁条件，玩家几乎不会被卡死
+  // 为每层放置逻辑门（GATE，默认 locked）— 调用顺序：必须在 placeFragments 之前
+  // 关键约束：放置后必须保证 (1,1) 仍能到达至少 1 个非起点 FLOOR cell，
+  // 否则玩家踩到 GATE 前没机会捡碎片解锁 → 死锁
+  // 策略：随机洗牌候选；逐个"试放 + BFS 校验 pre-GATE 区 FLOOR ≥ 1"；不达标则回退换下一个
   static placeGates(layers: Tile[][][], rng: Rng, perLayer: number): void {
     const layerCount: number = layers.length;
     if (layerCount === 0) {
@@ -236,6 +197,7 @@ export class MazeGenerator {
     const cols: number = layers[0][0].length;
 
     for (let L = 0; L < layerCount; L++) {
+      // 收集 FLOOR 候选（排除外圈 + 起点）
       const candidates: number[][] = [];
       for (let r = 1; r < rows - 1; r++) {
         for (let c = 1; c < cols - 1; c++) {
@@ -247,19 +209,169 @@ export class MazeGenerator {
           }
         }
       }
+      MazeGenerator.shuffleInPlace(candidates, rng);
 
-      const k: number = Math.min(perLayer, candidates.length);
-      for (let i = 0; i < k; i++) {
-        const j: number = i + rng.nextInt(candidates.length - i);
-        const tmp: number[] = candidates[i];
-        candidates[i] = candidates[j];
-        candidates[j] = tmp;
-      }
-      for (let i = 0; i < k; i++) {
+      let placed: number = 0;
+      for (let i = 0; i < candidates.length && placed < perLayer; i++) {
         const c: number = candidates[i][0];
         const r: number = candidates[i][1];
+        const saved: Tile = layers[L][r][c];
+        // 试放
         layers[L][r][c] = new Tile(TileType.GATE, -1, true);
+        // BFS：起点出发不穿门，能到至少 1 个非起点 FLOOR 即可
+        const visited: boolean[][] = MazeGenerator.bfsReachable(layers[L], 1, 1);
+        if (MazeGenerator.hasReachableFloor(layers[L], visited)) {
+          placed++;
+        } else {
+          // 死锁，回退
+          layers[L][r][c] = saved;
+        }
       }
     }
+  }
+
+  // 为每层放置信号碎片（FRAGMENT）— 调用顺序：必须在 placeGates 之后
+  // 关键约束：≥1 个碎片必须落在 pre-GATE 可达区（不穿门可达），否则玩家无法触发解锁
+  // 实施：BFS 切分 FLOOR → preFloor / postFloor；先从 preFloor 抽 1 个，剩余从合集随机
+  static placeFragments(layers: Tile[][][], rng: Rng, perLayer: number): void {
+    const layerCount: number = layers.length;
+    if (layerCount === 0) {
+      return;
+    }
+    const rows: number = layers[0].length;
+    const cols: number = layers[0][0].length;
+
+    for (let L = 0; L < layerCount; L++) {
+      const visited: boolean[][] = MazeGenerator.bfsReachable(layers[L], 1, 1);
+
+      const preFloor: number[][] = [];
+      const postFloor: number[][] = [];
+      for (let r = 1; r < rows - 1; r++) {
+        for (let c = 1; c < cols - 1; c++) {
+          if (c === 1 && r === 1) {
+            continue;
+          }
+          if (layers[L][r][c].type !== TileType.FLOOR) {
+            continue;
+          }
+          if (visited[r][c]) {
+            preFloor.push([c, r]);
+          } else {
+            postFloor.push([c, r]);
+          }
+        }
+      }
+      MazeGenerator.shuffleInPlace(preFloor, rng);
+      MazeGenerator.shuffleInPlace(postFloor, rng);
+
+      let placed: number = 0;
+      // 步骤 1：强制 1 个落在 pre-GATE 区
+      if (perLayer > 0 && preFloor.length > 0) {
+        const cell: number[] = preFloor[0];
+        layers[L][cell[1]][cell[0]] = new Tile(TileType.FRAGMENT);
+        placed = 1;
+      }
+      // 步骤 2：剩下从 pre（剩余）+ post 合集随机
+      const remaining: number[][] = [];
+      const startIdx: number = placed > 0 ? 1 : 0;
+      for (let i = startIdx; i < preFloor.length; i++) {
+        remaining.push(preFloor[i]);
+      }
+      for (let i = 0; i < postFloor.length; i++) {
+        remaining.push(postFloor[i]);
+      }
+      MazeGenerator.shuffleInPlace(remaining, rng);
+
+      for (let i = 0; i < remaining.length && placed < perLayer; i++) {
+        const cell: number[] = remaining[i];
+        layers[L][cell[1]][cell[0]] = new Tile(TileType.FRAGMENT);
+        placed++;
+      }
+    }
+  }
+
+  // 通用洗牌（Fisher-Yates 原地）
+  private static shuffleInPlace(arr: number[][], rng: Rng): void {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j: number = rng.nextInt(i + 1);
+      const tmp: number[] = arr[i];
+      arr[i] = arr[j];
+      arr[j] = tmp;
+    }
+  }
+
+  // BFS：从 (sc, sr) 出发的可达性掩码
+  // 通行规则：WALL / GATE 视为障碍；FLOOR / VIA / FRAGMENT 视为可走
+  // 用数组 + head 指针模拟队列，避免 shift 的 O(n)
+  private static bfsReachable(layer: Tile[][], sc: number, sr: number): boolean[][] {
+    const rows: number = layer.length;
+    const cols: number = layer[0].length;
+    const visited: boolean[][] = [];
+    for (let r = 0; r < rows; r++) {
+      const row: boolean[] = [];
+      for (let c = 0; c < cols; c++) {
+        row.push(false);
+      }
+      visited.push(row);
+    }
+    if (sr < 0 || sr >= rows || sc < 0 || sc >= cols) {
+      return visited;
+    }
+    if (!MazeGenerator.isPassableForBfs(layer[sr][sc])) {
+      return visited;
+    }
+
+    visited[sr][sc] = true;
+    const qx: number[] = [sc];
+    const qy: number[] = [sr];
+    let head: number = 0;
+    const dirs: number[][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    while (head < qx.length) {
+      const c: number = qx[head];
+      const r: number = qy[head];
+      head++;
+      for (let d = 0; d < 4; d++) {
+        const nc: number = c + dirs[d][0];
+        const nr: number = r + dirs[d][1];
+        if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) {
+          continue;
+        }
+        if (visited[nr][nc]) {
+          continue;
+        }
+        if (!MazeGenerator.isPassableForBfs(layer[nr][nc])) {
+          continue;
+        }
+        visited[nr][nc] = true;
+        qx.push(nc);
+        qy.push(nr);
+      }
+    }
+    return visited;
+  }
+
+  // BFS 通行判定：WALL / GATE 拦住；其余可走
+  private static isPassableForBfs(tile: Tile): boolean {
+    return tile.type !== TileType.WALL && tile.type !== TileType.GATE;
+  }
+
+  // 是否存在至少 1 个非起点的 visited FLOOR cell（用于 placeGates 校验）
+  private static hasReachableFloor(layer: Tile[][], visited: boolean[][]): boolean {
+    const rows: number = layer.length;
+    const cols: number = layer[0].length;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (!visited[r][c]) {
+          continue;
+        }
+        if (c === 1 && r === 1) {
+          continue;
+        }
+        if (layer[r][c].type === TileType.FLOOR) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }

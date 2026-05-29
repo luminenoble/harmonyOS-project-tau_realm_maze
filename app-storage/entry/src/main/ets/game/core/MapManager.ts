@@ -38,11 +38,13 @@ export class MapManager {
       this.layers.push(MazeGenerator.generate(cols, rows, layerSeed));
     }
 
-    // 用主 Rng 继续派生 Via / 碎片 / 逻辑门 放置的随机性
-    // 顺序：VIA → FRAGMENT → GATE。后两步在已有特殊 tile 上自动跳过（仅在 FLOOR 上放置）
+    // 用主 Rng 继续派生 Via / 逻辑门 / 碎片 放置的随机性
+    // 顺序：VIA → GATE → FRAGMENT。
+    // - VIA 先占位避免后续 carve 错位
+    // - GATE 先于 FRAGMENT：placeGates 用 BFS 校验 pre-GATE 区非空；placeFragments 据此 BFS 强制 1 碎片在 pre 区，断死锁
     MazeGenerator.placeVias(this.layers, masterRng, VIAS_PER_PAIR);
-    MazeGenerator.placeFragments(this.layers, masterRng, FRAGMENTS_PER_LAYER);
     MazeGenerator.placeGates(this.layers, masterRng, GATES_PER_LAYER);
+    MazeGenerator.placeFragments(this.layers, masterRng, FRAGMENTS_PER_LAYER);
   }
 
   // 越界返回 undefined；层号越界同样返回 undefined
