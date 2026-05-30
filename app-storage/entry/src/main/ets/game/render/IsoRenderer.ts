@@ -4,9 +4,9 @@
 import { gridToScreen, IsoConfig, ScreenPoint } from '../../utils/IsoMath';
 import { MapManager } from '../core/MapManager';
 import { Player } from '../core/Player';
-import { drawTile } from './TileSet';
+import { drawTile, drawFloor, drawWall } from './TileSet';
 import { drawPlayer } from './PlayerRenderer';
-import { Tile } from '../types/TileType';
+import { Tile, TileType } from '../types/TileType';
 
 // 瓦片视觉样式：填充色、描边色、线宽（保留给 Day 1 旧 API 使用）
 export interface TileStyle {
@@ -64,15 +64,17 @@ export function drawIsoGrid(
   }
 }
 
-// 渲染项类型：地图 cell 或玩家
-// 用三元组 [col, row, kind] 编码：kind=0 表 cell，kind=1 表玩家（坐标可能为浮点）
-// 玩家排序 key 末尾加微小偏移，避免与同 (row+col) 的 cell z-fighting
-const KIND_CELL: number = 0;
+// Pass 2 立体层的渲染项类型：WALL 块或玩家
+// 用三元组 [col, row, kind] 编码；玩家排序 key 末尾加 0.001 偏移避免 z-fighting
+const KIND_WALL: number = 0;
 const KIND_PLAYER: number = 1;
 
-// Painter's Algorithm 排序绘制整张地图（可选地把玩家排入序中）
-// key = row + col，升序遍历：远处先画，近处后画
-// 玩家以 visualCol/Row 浮点坐标参与排序，过墙脚时遮挡正确
+// 两遍渲染绘制整张地图：
+//   Pass 1（地板层，row-major 无排序）：每个 cell 先垫地板，非 WALL cell 再叠地面标识（VIA 三角 / GATE 栅 / FRAGMENT / THERMAL_VIA 等）
+//   Pass 2（立体层，painter's 排序）：WALL 块 + 玩家棱柱，按 row+col 升序绘制
+// 拆分原因：玩家移动到浮点坐标时会跨越两格，painter's 排序下"前方格地板"key 大于玩家，
+// 会在玩家底面之后绘制，覆盖玩家右下侧 → 视觉上"角色部分消失"。
+// 两遍渲染让所有地板提前画完，立体物之间仍 painter's 排序保证墙脚 / 墙后遮挡正确。
 export function drawMap(
   ctx: CanvasRenderingContext2D,
   map: MapManager,
@@ -82,19 +84,44 @@ export function drawMap(
   player?: Player,
   playerH?: number
 ): void {
-  // 收集所有渲染项：每项 [col(float), row(float), kind]
-  const items: number[][] = [];
+  // ===== Pass 1: 地板层 =====
+  // 同一平面上绘制，任意顺序结果一致；不参与立体排序
+  // WALL cell 只画地板（垫底，让 pass 2 的墙块有边可对齐），不画墙块本身
+  // 其余 cell 走 drawTile 走完整流程（含 VIA 三角 / GATE 栅 / FRAGMENT 等）
   for (let r = 0; r < map.rows; r++) {
     for (let c = 0; c < map.cols; c++) {
-      items.push([c, r, KIND_CELL]);
+      const tile: Tile | undefined = map.getTile(c, r, layer);
+      if (tile === undefined) {
+        continue;
+      }
+      const p: ScreenPoint = gridToScreen(c, r, layer, cfg);
+      if (tile.type === TileType.WALL) {
+        drawFloor(ctx, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH);
+      } else {
+        drawTile(ctx, tile, layer, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, wallH);
+      }
+    }
+  }
+
+  // ===== Pass 2: 立体层（WALL 块 + Player） =====
+  // 共用 row+col key 排序，让玩家走到墙后被前方墙遮挡，走到墙前覆盖后方墙
+  const sprites: number[][] = [];
+  for (let r = 0; r < map.rows; r++) {
+    for (let c = 0; c < map.cols; c++) {
+      const tile: Tile | undefined = map.getTile(c, r, layer);
+      if (tile === undefined) {
+        continue;
+      }
+      if (tile.type === TileType.WALL) {
+        sprites.push([c, r, KIND_WALL]);
+      }
     }
   }
   if (player !== undefined) {
-    // 玩家排序键加 0.001 偏移，保证同 row+col 时晚于 cell 绘制
-    items.push([player.visualCol() + 0.001, player.visualRow() + 0.001, KIND_PLAYER]);
+    // 玩家排序键加 0.001 偏移，与同 row+col 的 WALL z-fighting 时偏向"靠前"
+    sprites.push([player.visualCol() + 0.001, player.visualRow() + 0.001, KIND_PLAYER]);
   }
-
-  items.sort((a: number[], b: number[]) => {
+  sprites.sort((a: number[], b: number[]) => {
     const ka: number = a[0] + a[1];
     const kb: number = b[0] + b[1];
     if (ka !== kb) {
@@ -103,22 +130,18 @@ export function drawMap(
     return a[1] - b[1];
   });
 
-  // 按排序后顺序逐项绘制
   const ph: number = (playerH === undefined) ? wallH * 0.6 : playerH;
-  for (let i = 0; i < items.length; i++) {
-    const c: number = items[i][0];
-    const r: number = items[i][1];
-    const kind: number = items[i][2];
+  for (let i = 0; i < sprites.length; i++) {
+    const c: number = sprites[i][0];
+    const r: number = sprites[i][1];
+    const kind: number = sprites[i][2];
     const p: ScreenPoint = gridToScreen(c, r, layer, cfg);
 
     if (kind === KIND_PLAYER) {
       drawPlayer(ctx, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, ph);
     } else {
-      const tile: Tile | undefined = map.getTile(c, r, layer);
-      if (tile === undefined) {
-        continue;
-      }
-      drawTile(ctx, tile, layer, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, wallH);
+      // KIND_WALL：只画墙块（地板已在 pass 1 画过）
+      drawWall(ctx, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, wallH);
     }
   }
 }
