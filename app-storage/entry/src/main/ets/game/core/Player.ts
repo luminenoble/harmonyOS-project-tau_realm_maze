@@ -14,7 +14,16 @@ export class Player {
   private progress: number;
 
   // 每 tick 进度增量；约 10 tick / 格（@16ms ≈ 160ms 一格）
-  private readonly speed: number = 0.1;
+  // Day 6 起改为可变：过热时 GameEngine 会调 setSpeed(0.05) 让动画时长翻倍
+  private speed: number = 0.1;
+
+  // 由 GameEngine 在 tryMove 前按当前热量调整；幂等
+  // 输入 clamp 到 [0.01, 1]，避免 0 卡死或 >1 导致首帧瞬移
+  setSpeed(s: number): void {
+    const lo: number = 0.01;
+    const hi: number = 1;
+    this.speed = s < lo ? lo : (s > hi ? hi : s);
+  }
 
   constructor(col: number, row: number) {
     this.col = col;

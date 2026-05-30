@@ -3,11 +3,12 @@
 
 // 瓦片类型枚举
 export enum TileType {
-  FLOOR = 0,    // 可行走地板
-  WALL = 1,     // 阻挡墙体
-  VIA = 2,      // 层间通孔
-  GATE = 3,     // 逻辑门障碍（Day 5 启用）
-  FRAGMENT = 4  // 信号碎片道具（Day 5 启用）
+  FLOOR = 0,        // 可行走地板
+  WALL = 1,         // 阻挡墙体
+  VIA = 2,          // 层间通孔
+  GATE = 3,         // 逻辑门障碍（Day 5 启用）
+  FRAGMENT = 4,     // 信号碎片道具（Day 5 启用）
+  THERMAL_VIA = 5   // 散热通道（Day 6 启用），踩踏本层热量 -30，永久可用
 }
 
 // 单个瓦片数据

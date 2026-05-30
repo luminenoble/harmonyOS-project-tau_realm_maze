@@ -24,6 +24,10 @@ const COLOR_VIA_RING_LOCKED: string = '#8a2020'; // 锁定 VIA 暗红警示圈
 const COLOR_GATE_LOCKED: string = '#d63b3b';   // 红：锁定逻辑门
 const COLOR_GATE_UNLOCKED: string = '#22d3a8'; // 青绿：已解锁门（淡色提示边框）
 const COLOR_FRAGMENT: string = '#ffd166';      // 黄：信号碎片
+// THERMAL_VIA：青白冷光双层环
+const COLOR_THERMAL_OUTER: string = '#a8e6ff';
+const COLOR_THERMAL_INNER: string = '#e0f4ff';
+const COLOR_THERMAL_RING: string = '#5fc4e8';
 
 const LINE_WIDTH: number = 1;
 
@@ -227,6 +231,35 @@ export function drawFragment(
   drawMarker(ctx, cx, cy, halfW, halfH, COLOR_FRAGMENT);
 }
 
+// THERMAL_VIA：地板 + 青白冷光双层同心圆 + 外圈虚环
+// 视觉差异：无方向三角（区别 VIA）；冷色调（区别 FRAGMENT 暖色与 GATE 红色）
+export function drawThermalVia(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  halfW: number,
+  halfH: number
+): void {
+  drawFloor(ctx, cx, cy, halfW, halfH);
+
+  // 外层冷光圆
+  const rOuter: number = Math.max(3, halfW * 0.55);
+  ctx.beginPath();
+  ctx.arc(cx, cy, rOuter, 0, Math.PI * 2);
+  ctx.fillStyle = COLOR_THERMAL_OUTER;
+  ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = COLOR_THERMAL_RING;
+  ctx.stroke();
+
+  // 内层亮白圆
+  const rInner: number = Math.max(2, halfW * 0.3);
+  ctx.beginPath();
+  ctx.arc(cx, cy, rInner, 0, Math.PI * 2);
+  ctx.fillStyle = COLOR_THERMAL_INNER;
+  ctx.fill();
+}
+
 // 按瓦片类型分派绘制
 // currentLayer 用于 VIA 判定上行/下行（viaTarget > currentLayer 即上行）
 // 注意：WALL 会先绘制底下的 FLOOR（保持墙脚有 PCB 底色），再绘制墙块
@@ -256,6 +289,9 @@ export function drawTile(
       break;
     case TileType.FRAGMENT:
       drawFragment(ctx, cx, cy, halfW, halfH);
+      break;
+    case TileType.THERMAL_VIA:
+      drawThermalVia(ctx, cx, cy, halfW, halfH);
       break;
     default:
       drawFloor(ctx, cx, cy, halfW, halfH);

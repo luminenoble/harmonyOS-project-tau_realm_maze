@@ -290,6 +290,40 @@ export class MazeGenerator {
     }
   }
 
+  // 为每层放置散热通道（THERMAL_VIA）— 调用顺序：在 placeFragments 之后
+  // 候选：剩余 FLOOR cell（排除外圈、起点、已被占用的特殊瓦片）
+  // 不做 BFS 校验：放到不可达区只是"少了个缓解点"，不影响通关
+  static placeThermalVias(layers: Tile[][][], rng: Rng, perLayer: number): void {
+    const layerCount: number = layers.length;
+    if (layerCount === 0) {
+      return;
+    }
+    const rows: number = layers[0].length;
+    const cols: number = layers[0][0].length;
+
+    for (let L = 0; L < layerCount; L++) {
+      const candidates: number[][] = [];
+      for (let r = 1; r < rows - 1; r++) {
+        for (let c = 1; c < cols - 1; c++) {
+          if (c === 1 && r === 1) {
+            continue;
+          }
+          if (layers[L][r][c].type === TileType.FLOOR) {
+            candidates.push([c, r]);
+          }
+        }
+      }
+      MazeGenerator.shuffleInPlace(candidates, rng);
+
+      const k: number = Math.min(perLayer, candidates.length);
+      for (let i = 0; i < k; i++) {
+        const c: number = candidates[i][0];
+        const r: number = candidates[i][1];
+        layers[L][r][c] = new Tile(TileType.THERMAL_VIA);
+      }
+    }
+  }
+
   // 通用洗牌（Fisher-Yates 原地）
   private static shuffleInPlace(arr: number[][], rng: Rng): void {
     for (let i = arr.length - 1; i > 0; i--) {

@@ -38,6 +38,9 @@ struct GamePage {
   @State currentFragmentTotal: number = 0;
   // 距下一次动态重构剩余步数（Day 6）
   @State stepsUntilRestructure: number = 20;
+  // 当前层热量（Day 6 散热）
+  @State currentHeat: number = 0;
+  @State heatMax: number = 100;
 
   // 页面入场：构造引擎与地图
   aboutToAppear(): void {
@@ -62,18 +65,25 @@ struct GamePage {
     this.currentFragments = this.engine.currentFragments;
     this.currentFragmentTotal = this.engine.currentFragmentTotal;
     this.stepsUntilRestructure = this.engine.stepsUntilRestructure;
+    this.currentHeat = this.engine.currentHeat;
+    this.heatMax = this.engine.currentHeatMax;
     this.engine.setTickCallback(() => {
       const e: GameEngine = this.engine as GameEngine;
-      // 转场 swap 后同步层号与本层碎片计数到 ArkUI
+      // 转场 swap 后同步层号与本层碎片计数到 ArkUI（强制弹层与 VIA 切层都走这里）
       if (this.currentLayer !== e.currentLayer) {
         this.currentLayer = e.currentLayer;
         this.currentFragments = e.currentFragments;
         this.currentFragmentTotal = e.currentFragmentTotal;
       }
-      // 重构倒计时随每次 tick 同步（步数变化时触发 ArkUI 重绘）
+      // 重构倒计时随每次 tick 同步
       const newRemain: number = e.stepsUntilRestructure;
       if (this.stepsUntilRestructure !== newRemain) {
         this.stepsUntilRestructure = newRemain;
+      }
+      // 热量同步（每次 tick 都比较，过热与切层都会变化）
+      const newHeat: number = e.currentHeat;
+      if (this.currentHeat !== newHeat) {
+        this.currentHeat = newHeat;
       }
       this.renderMap();
     });
@@ -167,6 +177,17 @@ struct GamePage {
     (this.engine as GameEngine).tryMove(dCol, dRow);
   }
 
+  // 热量阶梯色：≥80 红（过热）/ ≥50 黄（警示）/ 其余青绿（凉）
+  private heatColor(): string {
+    if (this.currentHeat >= 80) {
+      return '#ff6b6b';
+    }
+    if (this.currentHeat >= 50) {
+      return '#ffd166';
+    }
+    return '#22d3a8';
+  }
+
   // 左侧 HUD 信息栏：标题 / 层数 / 碎片 / 操作按钮
   @Builder
   Sidebar() {
@@ -208,6 +229,21 @@ struct GamePage {
       Text('◆ ' + this.currentFragments + ' / ' + this.currentFragmentTotal)
         .fontSize(20)
         .fontColor('#ffd166')
+        .margin({ top: 4, bottom: 24 })
+
+      // 本层热量（蓝→黄→红阶梯）
+      Text('本层热量')
+        .fontSize(12)
+        .fontColor('#5a7088')
+      Progress({ value: this.currentHeat, total: this.heatMax, type: ProgressType.Linear })
+        .color(this.heatColor())
+        .style({ strokeWidth: 8 })
+        .width('100%')
+        .margin({ top: 6 })
+      Text(Math.floor(this.currentHeat) + ' / ' + this.heatMax
+          + (this.currentHeat >= 80 ? '  · 过热！' : ''))
+        .fontSize(14)
+        .fontColor(this.heatColor())
         .margin({ top: 4, bottom: 24 })
 
       // 重构倒计时（每 20 步触发一次局部重构）

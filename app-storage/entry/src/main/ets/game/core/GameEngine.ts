@@ -8,6 +8,7 @@ import { GateLogic } from '../puzzle/GateLogic';
 import { ViaUnlock } from '../puzzle/ViaUnlock';
 import { pickFact } from '../data/ChipFacts';
 import { Restructurer, RestructureResult } from './Restructurer';
+import { HeatManager } from './HeatManager';
 import { Rng } from '../../utils/MazeGenerator';
 
 // tick 回调类型
@@ -29,6 +30,9 @@ export enum EnginePhase {
 const STEPS_PER_RESTRUCTURE: number = 20;
 const OPENS_PER_CYCLE: number = 2;
 const CLOSES_PER_CYCLE: number = 2;
+// Day 6 散热：正常 / 过热移动速度
+const SPEED_NORMAL: number = 0.1;
+const SPEED_OVERHEATED: number = 0.05;
 
 export class GameEngine {
   readonly map: MapManager;
@@ -62,6 +66,11 @@ export class GameEngine {
   // 运行时 RNG：重构与未来动态系统共用
   private _rng: Rng;
 
+  // Day 6 散热
+  private _heat: HeatManager;
+  // 当前是强制弹层（区别于 VIA 主动切层）；TRANSITION_OUT 末尾根据此标志分支
+  private _forcedPop: boolean;
+
   private intervalId: number = -1;
   private onTick: TickCallback;
   private onFragmentPicked: FragmentPickedCallback;
@@ -82,6 +91,10 @@ export class GameEngine {
     this._lastClosed = [];
     // 用启动时间 + 起点扰动作 seed，避免每次重生 RNG 序列一致
     this._rng = new Rng(Date.now() ^ ((startCol << 8) | startRow));
+
+    // 散热：三层各自从 0 起跳
+    this._heat = new HeatManager(map.layerCount);
+    this._forcedPop = false;
 
     // 统计每层 FRAGMENT 初始总数
     this._fragments = [];
@@ -167,6 +180,24 @@ export class GameEngine {
     return this._lastClosed;
   }
 
+  // Day 6 散热：当前层热量值与状态
+  get currentHeat(): number {
+    return this._heat.getHeat(this._currentLayer);
+  }
+
+  get currentHeatMax(): number {
+    return HeatManager.MAX;
+  }
+
+  get isOverheated(): boolean {
+    return this._heat.isOverheated(this._currentLayer);
+  }
+
+  // 强制弹层动画进行中（视觉 banner 用）
+  get isForcedPopping(): boolean {
+    return this._forcedPop;
+  }
+
   // 是否正在转场（用于 UI 决定是否禁用输入指示）
   isTransitioning(): boolean {
     return this.phase === EnginePhase.TRANSITION_OUT
@@ -197,6 +228,12 @@ export class GameEngine {
     if (!GateLogic.canPass(tile, this._fragments[this._currentLayer])) {
       return false;
     }
+    // Day 6 散热：升温先于移动，过热即时减速；底层 ×2 倍率在 HeatManager 内部处理
+    this._heat.tickStep(this._currentLayer);
+    const speed: number = this._heat.isOverheated(this._currentLayer)
+      ? SPEED_OVERHEATED : SPEED_NORMAL;
+    this.player.setSpeed(speed);
+
     this.player.startMove(dCol, dRow);
     this.phase = EnginePhase.MOVING;
     this._stepCount++;
@@ -215,12 +252,21 @@ export class GameEngine {
       this.transitionT += this.TRANSITION_SPEED;
       if (this.transitionT >= 1) {
         this.transitionT = 1;
-        // 黑屏瞬间换层
-        const tile: Tile | undefined = this.map.getTile(
-          this.player.col, this.player.row, this._currentLayer
-        );
-        if (tile !== undefined && tile.viaTarget >= 0) {
-          this._currentLayer = tile.viaTarget;
+        // 黑屏瞬间换层：强制弹层 vs VIA 主动切层两支
+        if (this._forcedPop) {
+          // 离开层热量清零（玩家"凉下来"才能再回）；落到下层 (1,1) 起点
+          this._heat.reset(this._currentLayer);
+          this._currentLayer -= 1;
+          this.player.col = 1;
+          this.player.row = 1;
+          this._forcedPop = false;
+        } else {
+          const tile: Tile | undefined = this.map.getTile(
+            this.player.col, this.player.row, this._currentLayer
+          );
+          if (tile !== undefined && tile.viaTarget >= 0) {
+            this._currentLayer = tile.viaTarget;
+          }
         }
         this.phase = EnginePhase.TRANSITION_IN;
         this.transitionT = 0;
@@ -230,7 +276,10 @@ export class GameEngine {
       if (this.transitionT >= 1) {
         this.transitionT = 1;
         this.phase = EnginePhase.IDLE;
-        // 切层完成后检查是否要触发重构（在新层上）
+        // 切层完成后：先看新层是否也已经过热（连环弹层），再看是否触发重构
+        if (this.maybeForcePop()) {
+          return;
+        }
         this.maybeStartRestructure();
       }
     } else if (this.phase === EnginePhase.RESTRUCTURE_WARN) {
@@ -273,11 +322,23 @@ export class GameEngine {
       ViaUnlock.unlockAllInLayer(this.map, this._currentLayer, count);
       this.onFragmentPicked(pickFact(this._pickedCount - 1));
       this.phase = EnginePhase.IDLE;
+      if (this.maybeForcePop()) {
+        return;
+      }
       this.maybeStartRestructure();
       return;
     }
 
-    // 2) VIA：解锁则切层，锁定则停在原地
+    // 2) 散热通道：本层热量 -30，瓦片不消耗
+    if (tile.type === TileType.THERMAL_VIA) {
+      this._heat.cool(this._currentLayer);
+      // 散热后通常不会立即过热弹层；保险起见仍走标准路径
+      this.phase = EnginePhase.IDLE;
+      this.maybeStartRestructure();
+      return;
+    }
+
+    // 3) VIA：解锁则切层，锁定则停在原地
     if (tile.type === TileType.VIA && tile.viaTarget >= 0) {
       if (ViaUnlock.canTrigger(tile, this._currentLayer, this._fragments[this._currentLayer])) {
         this.phase = EnginePhase.TRANSITION_OUT;
@@ -288,7 +349,27 @@ export class GameEngine {
     }
 
     this.phase = EnginePhase.IDLE;
+    // 检查过热强制弹层（优先级高于重构）
+    if (this.maybeForcePop()) {
+      return;
+    }
     this.maybeStartRestructure();
+  }
+
+  // 检查是否触发过热强制弹层；返回 true 表示已进入 TRANSITION_OUT
+  // Layer 0 无下层可弹，仅 cap 不触发动画
+  private maybeForcePop(): boolean {
+    if (!this._heat.isForcedPop(this._currentLayer)) {
+      return false;
+    }
+    if (this._currentLayer === 0) {
+      return false;
+    }
+    this._forcedPop = true;
+    this.phase = EnginePhase.TRANSITION_OUT;
+    this.transitionT = 0;
+    this.startLoop();
+    return true;
   }
 
   // 每 STEPS_PER_RESTRUCTURE 步触发一次：进入 WARN，由 advance 在 t→1 时 apply
