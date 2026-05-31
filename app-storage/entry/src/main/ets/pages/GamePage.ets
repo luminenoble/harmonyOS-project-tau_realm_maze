@@ -5,7 +5,7 @@
 import { router } from '@kit.ArkUI';
 import { IsoConfig } from '../utils/IsoMath';
 import { drawMap, drawRestructurePulse } from '../game/render/IsoRenderer';
-import { drawFade, drawWarningOverlay, drawViaProgressBar } from '../game/render/UIOverlay';
+import { drawFade, drawWarningOverlay, drawViaProgressBar, drawShutterFold } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine, VictoryStats } from '../game/core/GameEngine';
 
@@ -190,8 +190,12 @@ struct GamePage {
       drawViaProgressBar(this.ctx, w, h, e.viaWaitTierValue, e.viaWaitProgress);
     }
 
-    // 转场黑屏覆盖（最后画）
-    drawFade(this.ctx, w, h, e.transitionAlpha);
+    // 转场覆盖（最后画）：VIA 切层用 shutter 折叠，强制弹层走原 fade
+    if (e.isViaTransition) {
+      drawShutterFold(this.ctx, w, h, e.transitionAlpha);
+    } else {
+      drawFade(this.ctx, w, h, e.transitionAlpha);
+    }
   }
 
   // 滑动手势 → 网格方向 → 引擎 tryMove

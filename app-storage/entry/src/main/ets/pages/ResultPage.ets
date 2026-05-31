@@ -3,6 +3,7 @@
 // Day 8 在评级牌下方追加"芯片工程师评语"区（接 AIComment.ts）
 
 import { router } from '@kit.ArkUI';
+import { getAIComment, AIPromptStats } from '../utils/AIComment';
 
 // 通过 router.getParams() 传入的结构；字段必须与 GameEngine.VictoryStats 对齐
 interface ResultParams {
@@ -34,6 +35,8 @@ struct ResultPage {
   @State l2: number = 0;
   @State mem: number = 0;
   @State heatPeak: number[] = [0, 0, 0];
+  // Day 8：AI 评语；加载中显示占位文案，getAIComment resolve 后切到正文
+  @State aiComment: string = '正在分析走线...';
 
   aboutToAppear(): void {
     const raw: object = router.getParams() as object;
@@ -50,6 +53,29 @@ struct ResultPage {
     if (p.heatPeak !== undefined && p.heatPeak !== null && p.heatPeak.length > 0) {
       this.heatPeak = p.heatPeak;
     }
+    // Day 8：异步取 AI 评语（演示版 Promise.resolve 立即完成）
+    this.loadAIComment();
+  }
+
+  // 异步加载评语；演示版同步 resolve，真实接入时延迟可见 loading 占位
+  private loadAIComment(): void {
+    const stats: AIPromptStats = {
+      steps: this.steps,
+      tauVia: this.tauVia,
+      tau: this.tau,
+      l1: this.l1,
+      l2: this.l2,
+      mem: this.mem,
+      heatPeak: this.heatPeak,
+      rating: this.rating()
+    };
+    getAIComment(stats)
+      .then((text: string) => {
+        this.aiComment = text;
+      })
+      .catch((_err: Error) => {
+        this.aiComment = '评语生成失败，请重试。';
+      });
   }
 
   // τ 评级：S / A / B / C
@@ -131,11 +157,39 @@ struct ResultPage {
       Text('走线优化  ' + this.optimizationPct() + ' %')
         .fontSize(16)
         .fontColor('#22d3a8')
+        .margin({ bottom: 24 })
+
+      // Day 8：芯片工程师评语卡片
+      this.AICommentCard()
     }
-    .width(320)
+    .width(360)
     .height('100%')
     .padding({ left: 24, right: 24, top: 60 })
     .alignItems(HorizontalAlign.Center)
+  }
+
+  // 评语卡片：标题 + 多行评语；与评级牌同色系深底
+  @Builder
+  AICommentCard() {
+    Column() {
+      Text('芯片工程师评语')
+        .fontSize(12)
+        .fontColor('#5a7088')
+        .alignSelf(ItemAlign.Start)
+        .margin({ bottom: 6 })
+      Text(this.aiComment)
+        .fontSize(13)
+        .fontColor('#cfe3ff')
+        .lineHeight(18)
+        .textAlign(TextAlign.Start)
+        .width('100%')
+    }
+    .width(300)
+    .padding(12)
+    .backgroundColor('#0d1424')
+    .borderRadius(6)
+    .border({ width: 1, color: '#22d3a833' })
+    .alignItems(HorizontalAlign.Start)
   }
 
   // 右侧：VIA 使用 + 热量峰值

@@ -117,6 +117,9 @@ export class GameEngine {
   private _heat: HeatManager;
   // 当前是强制弹层（区别于 VIA 主动切层）；TRANSITION_OUT 末尾根据此标志分支
   private _forcedPop: boolean;
+  // Day 8：当前 TRANSITION 是 VIA 主动切层（true → shutter 折叠）还是强制弹层（false → 黑屏 fade）
+  // 仅在 isTransitioning() 期间有意义；进入 TRANSITION_OUT 时 set，进 IDLE 时 reset
+  private _isViaTransition: boolean;
 
   private intervalId: number = -1;
   private onTick: TickCallback;
@@ -149,6 +152,7 @@ export class GameEngine {
     // 散热：三层各自从 0 起跳
     this._heat = new HeatManager(map.layerCount);
     this._forcedPop = false;
+    this._isViaTransition = false;
 
     // Day 7 统计字段
     this._viaCounts = [0, 0, 0];
@@ -295,6 +299,11 @@ export class GameEngine {
     return this._forcedPop;
   }
 
+  // Day 8：当前 TRANSITION 是 VIA 主动切层（GamePage 据此选 shutter vs fade）
+  get isViaTransition(): boolean {
+    return this._isViaTransition;
+  }
+
   // Day 7：VIA 等待中（用于 UI 决定是否画中央进度条）
   get isViaWaiting(): boolean {
     return this.phase === EnginePhase.VIA_WAIT;
@@ -370,6 +379,8 @@ export class GameEngine {
       if (this.viaWaitT >= 1) {
         this.viaWaitT = 1;
         this.viaWaitTier = -1;
+        // Day 8：VIA 触发的转场标记为 shutter
+        this._isViaTransition = true;
         this.phase = EnginePhase.TRANSITION_OUT;
         this.transitionT = 0;
       }
@@ -393,6 +404,8 @@ export class GameEngine {
             this._currentLayer = tile.viaTarget;
           }
         }
+        // Day 8：换层瞬间清残影（残影属于上一层）
+        this.player.clearTrail();
         this.phase = EnginePhase.TRANSITION_IN;
         this.transitionT = 0;
       }
@@ -401,6 +414,8 @@ export class GameEngine {
       if (this.transitionT >= 1) {
         this.transitionT = 1;
         this.phase = EnginePhase.IDLE;
+        // Day 8：转场结束清 VIA shutter 标记
+        this._isViaTransition = false;
         // 切层完成后：先看新层是否也已经过热（连环弹层），再看是否触发重构
         if (this.maybeForcePop()) {
           return;
@@ -542,6 +557,8 @@ export class GameEngine {
       return false;
     }
     this._forcedPop = true;
+    // Day 8：强制弹层使用经典黑屏 fade，与 VIA shutter 区分
+    this._isViaTransition = false;
     this.phase = EnginePhase.TRANSITION_OUT;
     this.transitionT = 0;
     this.startLoop();
@@ -618,5 +635,7 @@ export class GameEngine {
     this.restructureT = 0;
     this.viaWaitT = 0;
     this.viaWaitTier = -1;
+    this._isViaTransition = false;
+    this.player.clearTrail();
   }
 }

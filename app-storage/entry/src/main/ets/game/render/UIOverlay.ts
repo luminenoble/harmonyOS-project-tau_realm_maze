@@ -13,6 +13,41 @@ const COLOR_FRAGMENT_TEXT: string = '#ffd166';
 const COLOR_WARN_FILL: string = '#ff3030';
 const COLOR_WARN_TEXT: string = '#ffe0e0';
 
+// Day 8：VIA 切层折叠动画（shutter）
+// 上下两条黑色矩形从顶/底向中心合拢，progress=1 时完全合拢 = 全黑
+// 中央对玩家位置叠加一道窄高光"折痕"，强化"芯片层翻页"质感
+// progress 0..1：TRANSITION_OUT 走 transitionT，TRANSITION_IN 走 1 - transitionT（自动镜像）
+const COLOR_SHUTTER: string = '#000000';
+const COLOR_FOLD_EDGE: string = '#22d3a8';
+
+export function drawShutterFold(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  progress: number
+): void {
+  if (progress <= 0) {
+    return;
+  }
+  const p: number = progress > 1 ? 1 : progress;
+  const half: number = h / 2;
+  const shutterH: number = half * p;
+
+  ctx.fillStyle = COLOR_SHUTTER;
+  // 顶部 shutter
+  ctx.fillRect(0, 0, w, shutterH);
+  // 底部 shutter
+  ctx.fillRect(0, h - shutterH, w, shutterH);
+
+  // 中央高光折痕：合拢前一窄条青绿提示"层在压缩"，progress 越大越亮
+  // 折痕高度固定 2px，透明度跟随 progress
+  const edgeY: number = half;
+  ctx.globalAlpha = p;
+  ctx.fillStyle = COLOR_FOLD_EDGE;
+  ctx.fillRect(0, edgeY - 1, w, 2);
+  ctx.globalAlpha = 1;
+}
+
 // 全屏纯色覆盖；alpha 0 不画，1 全黑
 // 用 save/restore + 显式 reset 双重保险，避免 ctx 状态泄漏到下一帧
 export function drawFade(

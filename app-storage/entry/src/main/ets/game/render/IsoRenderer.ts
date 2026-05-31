@@ -5,7 +5,7 @@ import { gridToScreen, IsoConfig, ScreenPoint } from '../../utils/IsoMath';
 import { MapManager } from '../core/MapManager';
 import { Player } from '../core/Player';
 import { drawTile, drawFloor, drawWall } from './TileSet';
-import { drawPlayer } from './PlayerRenderer';
+import { drawPlayer, drawTrail } from './PlayerRenderer';
 import { Tile, TileType } from '../types/TileType';
 
 // 瓦片视觉样式：填充色、描边色、线宽（保留给 Day 1 旧 API 使用）
@@ -96,11 +96,18 @@ export function drawMap(
       }
       const p: ScreenPoint = gridToScreen(c, r, layer, cfg);
       if (tile.type === TileType.WALL) {
-        drawFloor(ctx, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH);
+        // Day 8：墙脚 FLOOR 也跟随层冷暖
+        drawFloor(ctx, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, layer);
       } else {
         drawTile(ctx, tile, layer, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, wallH);
       }
     }
+  }
+
+  // Day 8：玩家身后残影（贴地板层级，画完地板后立即绘制）
+  // trail 已由 Player 维护；切层时 GameEngine 调 clearTrail，避免视觉残留
+  if (player !== undefined && player.trail.length > 0) {
+    drawTrail(ctx, player.trail, cfg, layer);
   }
 
   // ===== Pass 2: 立体层（WALL 块 + Player） =====

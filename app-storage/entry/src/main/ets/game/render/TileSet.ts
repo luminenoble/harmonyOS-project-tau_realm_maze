@@ -6,8 +6,15 @@ import { Tile, TileType } from '../types/TileType';
 
 // 颜色：地板用冷蓝（暗底 + 亮蓝描边），墙体用黑金（金顶 + 黑侧）
 // 冷暖对立 + 大色相差，小屏上路 ↔ 墙一眼可分
+// Day 1-7 默认色（Layer 1，逻辑层中性色）；Day 8 加层冷暖渐变后通过 layer 参数选色
 const COLOR_FLOOR_FILL: string = '#0c1a36';     // 极暗蓝，路面"沉下去"
 const COLOR_FLOOR_STROKE: string = '#5a8cd0';   // 亮蓝描边，电路"通路"感
+
+// Day 8：层冷暖渐变（CLAUDE.md "底层器件 暖橙 → 顶层互联 冷蓝"）
+// Layer 0 暖底（暗棕红 + 古铜描边）；Layer 1 保留原中性蓝；Layer 2 冷底（深青蓝 + 亮冰蓝描边）
+// 只改 FLOOR；WALL 顶面金色保留不变，避免视觉割裂
+const FLOOR_FILL_BY_LAYER: string[] = ['#2a1410', '#0c1a36', '#0a2840'];
+const FLOOR_STROKE_BY_LAYER: string[] = ['#a06848', '#5a8cd0', '#7fb5ff'];
 
 // 墙体三面（顶/右/左）：金 → 暗金 → 近黑，模拟侧光
 const COLOR_WALL_TOP: string = '#e0b35e';       // 金
@@ -37,13 +44,20 @@ const COLOR_THERMAL_RING: string = '#5fc4e8';
 const LINE_WIDTH: number = 1;
 
 // 绘制地板菱形
+// layer Day 8 起选填：0=底层暖橙 / 1=中层中性蓝（默认）/ 2=顶层冷蓝
+// 越界一律退化为 Layer 1 中性色，保持 Day 1-7 旧调用点的视觉不变
 export function drawFloor(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
   halfW: number,
-  halfH: number
+  halfH: number,
+  layer: number = 1
 ): void {
+  const idx: number = (layer >= 0 && layer < FLOOR_FILL_BY_LAYER.length) ? layer : 1;
+  const fill: string = FLOOR_FILL_BY_LAYER[idx];
+  const stroke: string = FLOOR_STROKE_BY_LAYER[idx];
+
   ctx.beginPath();
   ctx.moveTo(cx, cy - halfH);
   ctx.lineTo(cx + halfW, cy);
@@ -51,10 +65,10 @@ export function drawFloor(
   ctx.lineTo(cx - halfW, cy);
   ctx.closePath();
 
-  ctx.fillStyle = COLOR_FLOOR_FILL;
+  ctx.fillStyle = fill;
   ctx.fill();
   ctx.lineWidth = LINE_WIDTH;
-  ctx.strokeStyle = COLOR_FLOOR_STROKE;
+  ctx.strokeStyle = stroke;
   ctx.stroke();
 }
 
@@ -155,9 +169,10 @@ export function drawVia(
   halfH: number,
   up: boolean,
   locked: boolean,
-  tier: number
+  tier: number,
+  layer: number = 1
 ): void {
-  drawFloor(ctx, cx, cy, halfW, halfH);
+  drawFloor(ctx, cx, cy, halfW, halfH, layer);
 
   // 根据 tier 选填色与边圈色
   let fillColor: string = COLOR_VIA_MEM;
@@ -204,9 +219,10 @@ export function drawGate(
   cy: number,
   halfW: number,
   halfH: number,
-  locked: boolean
+  locked: boolean,
+  layer: number = 1
 ): void {
-  drawFloor(ctx, cx, cy, halfW, halfH);
+  drawFloor(ctx, cx, cy, halfW, halfH, layer);
   const color: string = locked ? COLOR_GATE_LOCKED : COLOR_GATE_UNLOCKED;
 
   // 三道横栅栏：在 cell 内沿垂直方向均布
@@ -239,9 +255,10 @@ export function drawFragment(
   cx: number,
   cy: number,
   halfW: number,
-  halfH: number
+  halfH: number,
+  layer: number = 1
 ): void {
-  drawFloor(ctx, cx, cy, halfW, halfH);
+  drawFloor(ctx, cx, cy, halfW, halfH, layer);
   drawMarker(ctx, cx, cy, halfW, halfH, COLOR_FRAGMENT);
 }
 
@@ -252,9 +269,10 @@ export function drawThermalVia(
   cx: number,
   cy: number,
   halfW: number,
-  halfH: number
+  halfH: number,
+  layer: number = 1
 ): void {
-  drawFloor(ctx, cx, cy, halfW, halfH);
+  drawFloor(ctx, cx, cy, halfW, halfH, layer);
 
   // 外层冷光圆
   const rOuter: number = Math.max(3, halfW * 0.55);
@@ -286,9 +304,10 @@ export function drawExit(
   cx: number,
   cy: number,
   halfW: number,
-  halfH: number
+  halfH: number,
+  layer: number = 1
 ): void {
-  drawFloor(ctx, cx, cy, halfW, halfH);
+  drawFloor(ctx, cx, cy, halfW, halfH, layer);
 
   // 外层大菱形（描边 + 半透明青绿填充）
   const r1: number = 0.85;
@@ -331,32 +350,32 @@ export function drawTile(
 ): void {
   switch (tile.type) {
     case TileType.FLOOR:
-      drawFloor(ctx, cx, cy, halfW, halfH);
+      drawFloor(ctx, cx, cy, halfW, halfH, currentLayer);
       break;
     case TileType.WALL:
-      drawFloor(ctx, cx, cy, halfW, halfH);
+      drawFloor(ctx, cx, cy, halfW, halfH, currentLayer);
       drawWall(ctx, cx, cy, halfW, halfH, wallH);
       break;
     case TileType.VIA:
       drawVia(
         ctx, cx, cy, halfW, halfH,
-        tile.viaTarget > currentLayer, tile.locked, tile.viaTier
+        tile.viaTarget > currentLayer, tile.locked, tile.viaTier, currentLayer
       );
       break;
     case TileType.GATE:
-      drawGate(ctx, cx, cy, halfW, halfH, tile.locked);
+      drawGate(ctx, cx, cy, halfW, halfH, tile.locked, currentLayer);
       break;
     case TileType.FRAGMENT:
-      drawFragment(ctx, cx, cy, halfW, halfH);
+      drawFragment(ctx, cx, cy, halfW, halfH, currentLayer);
       break;
     case TileType.THERMAL_VIA:
-      drawThermalVia(ctx, cx, cy, halfW, halfH);
+      drawThermalVia(ctx, cx, cy, halfW, halfH, currentLayer);
       break;
     case TileType.EXIT:
-      drawExit(ctx, cx, cy, halfW, halfH);
+      drawExit(ctx, cx, cy, halfW, halfH, currentLayer);
       break;
     default:
-      drawFloor(ctx, cx, cy, halfW, halfH);
+      drawFloor(ctx, cx, cy, halfW, halfH, currentLayer);
       break;
   }
 }
