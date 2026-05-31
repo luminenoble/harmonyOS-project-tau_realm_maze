@@ -454,10 +454,13 @@ export class GameEngine {
       return;
     }
 
-    // 2) 散热通道：本层热量 -30，瓦片不消耗
+    // 2) 散热通道：本层热量 -30，单次消耗（Day 7 fix）
+    // 之前设计成永久可用，玩家可在两格间反复横跳无限降温，散热压力失效
+    // 现在踩一次即烧毁：tile 改 FLOOR，重构系统因此也能把该格关闭（不再算特殊瓦片）
     if (tile.type === TileType.THERMAL_VIA) {
       this._heat.cool(this._currentLayer);
-      // 散热后通常不会立即过热弹层；保险起见仍走标准路径
+      tile.type = TileType.FLOOR;
+      tile.locked = false;
       this.phase = EnginePhase.IDLE;
       this.maybeStartRestructure();
       return;
