@@ -2,7 +2,7 @@
 // 支持评级筛选（全部/S/A/B/C）+ 时间筛选（全部/今天/本周/本月）
 
 import { router } from '@kit.ArkUI';
-import { GameRecord, queryGameRecords, RecordFilter } from '../utils/DbHelper';
+import { GameRecord, queryGameRecords, RecordFilter, initDb } from '../utils/DbHelper';
 import { getCurrentUserId } from '../utils/UserSession';
 
 // 评级筛选选项
@@ -32,9 +32,10 @@ struct HistoryPage {
     this.loadRecords();
   }
 
-  // 加载记录（应用筛选条件）
+  // 加载记录（先确保 DB 已就绪，再应用筛选条件）
   private async loadRecords(): Promise<void> {
     this.loading = true;
+    await initDb(getContext(this));
     const userId: number = getCurrentUserId();
     if (userId < 0) {
       this.loading = false;

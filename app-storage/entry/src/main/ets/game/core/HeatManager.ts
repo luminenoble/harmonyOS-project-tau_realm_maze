@@ -6,7 +6,7 @@ export class HeatManager {
   static readonly MAX: number = 100;
   static readonly OVERHEAT_THRESHOLD: number = 80;    // 减速触发线
   static readonly FORCE_POP_THRESHOLD: number = 100;  // 强制弹层触发线
-  static readonly HEAT_PER_STEP_BASE: number = 2;     // 中层每步 +2
+  static readonly HEAT_PER_STEP_BASE: number = 1;     // 中层每步 +1
   static readonly BOTTOM_LAYER_MULT: number = 2;      // 底层（Layer 0）×2 = +4
   static readonly COOL_AMOUNT: number = 30;           // THERMAL_VIA 单次降温
 

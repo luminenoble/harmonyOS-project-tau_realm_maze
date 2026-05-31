@@ -4,7 +4,7 @@
 
 import { router } from '@kit.ArkUI';
 import { getAIComment, AIPromptStats } from '../utils/AIComment';
-import { insertGameRecord } from '../utils/DbHelper';
+import { insertGameRecord, initDb } from '../utils/DbHelper';
 import { getCurrentUserId } from '../utils/UserSession';
 
 // 通过 router.getParams() 传入的结构；字段必须与 GameEngine.VictoryStats 对齐
@@ -97,6 +97,7 @@ struct ResultPage {
       return;
     }
     try {
+      await initDb(getContext(this));
       await insertGameRecord(
         uid, this.steps, this.tauVia, this.tau,
         this.rating(), this.l1, this.l2, this.mem,

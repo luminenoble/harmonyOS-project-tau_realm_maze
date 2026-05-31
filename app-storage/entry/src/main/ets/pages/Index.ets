@@ -1,6 +1,6 @@
 // 主菜单页：游戏标题 + 用户信息 + 称号选择 + 进入游戏 / 历史记录 / 切换用户
 import { router } from '@kit.ArkUI';
-import { UserRecord } from '../utils/DbHelper';
+import { UserRecord, initDb } from '../utils/DbHelper';
 import {
   getCurrentUserId, getCurrentUser, getCurrentTitle,
   getUnlockedTitles, selectTitle, logout
@@ -23,8 +23,9 @@ struct Index {
     this.loadUserInfo();
   }
 
-  // 加载当前用户信息
+  // 加载当前用户信息（先确保 DB 已就绪）
   private async loadUserInfo(): Promise<void> {
+    await initDb(getContext(this));
     const uid: number = getCurrentUserId();
     if (uid < 0) {
       // 未登录，跳转登录页
