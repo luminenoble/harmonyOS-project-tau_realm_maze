@@ -4,6 +4,8 @@
 
 import { router } from '@kit.ArkUI';
 import { getAIComment, AIPromptStats } from '../utils/AIComment';
+import { insertGameRecord } from '../utils/DbHelper';
+import { getCurrentUserId } from '../utils/UserSession';
 
 // 通过 router.getParams() 传入的结构；字段必须与 GameEngine.VictoryStats 对齐
 interface ResultParams {
@@ -37,6 +39,8 @@ struct ResultPage {
   @State heatPeak: number[] = [0, 0, 0];
   // Day 8：AI 评语；加载中显示占位文案，getAIComment resolve 后切到正文
   @State aiComment: string = '正在分析走线...';
+  // 是否已保存到数据库（避免重复写入）
+  private saved: boolean = false;
 
   aboutToAppear(): void {
     const raw: object = router.getParams() as object;
@@ -57,7 +61,7 @@ struct ResultPage {
     this.loadAIComment();
   }
 
-  // 异步加载评语；演示版同步 resolve，真实接入时延迟可见 loading 占位
+  // 异步加载评语，完成后自动保存记录到数据库
   private loadAIComment(): void {
     const stats: AIPromptStats = {
       steps: this.steps,
@@ -72,10 +76,35 @@ struct ResultPage {
     getAIComment(stats)
       .then((text: string) => {
         this.aiComment = text;
+        // 评语就绪后保存完整记录
+        this.saveRecord(text);
       })
       .catch((_err: Error) => {
         this.aiComment = '评语生成失败，请重试。';
+        // 即使评语失败也保存记录
+        this.saveRecord('');
       });
+  }
+
+  // 将通关数据 + AI 评语写入数据库
+  private async saveRecord(comment: string): Promise<void> {
+    if (this.saved) {
+      return;
+    }
+    this.saved = true;
+    const uid: number = getCurrentUserId();
+    if (uid < 0) {
+      return;
+    }
+    try {
+      await insertGameRecord(
+        uid, this.steps, this.tauVia, this.tau,
+        this.rating(), this.l1, this.l2, this.mem,
+        this.heatPeak, comment
+      );
+    } catch (_e) {
+      // 存储失败静默处理，不影响结算展示
+    }
   }
 
   // τ 评级：S / A / B / C

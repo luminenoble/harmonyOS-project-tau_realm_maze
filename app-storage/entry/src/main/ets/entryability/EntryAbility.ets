@@ -1,6 +1,8 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { initDb } from '../utils/DbHelper';
+import { initSession, isLoggedIn } from '../utils/UserSession';
 
 const DOMAIN = 0x0000;
 
@@ -11,6 +13,12 @@ export default class EntryAbility extends UIAbility {
     } catch (err) {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
+    // 初始化登录态持久化（必须在 UI 加载前调用）
+    initSession();
+    // 初始化数据库
+    initDb(this.context).catch((err: Error) => {
+      hilog.error(DOMAIN, 'testTag', 'Failed to init DB: %{public}s', err.message);
+    });
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
   }
 
@@ -22,7 +30,9 @@ export default class EntryAbility extends UIAbility {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
-    windowStage.loadContent('pages/Index', (err) => {
+    // 根据登录态决定首页：已登录 → Index，未登录 → LoginPage
+    const startPage: string = isLoggedIn() ? 'pages/Index' : 'pages/LoginPage';
+    windowStage.loadContent(startPage, (err) => {
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;

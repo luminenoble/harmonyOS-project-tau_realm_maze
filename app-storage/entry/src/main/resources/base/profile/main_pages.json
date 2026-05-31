@@ -2,6 +2,8 @@
   "src": [
     "pages/Index",
     "pages/GamePage",
-    "pages/ResultPage"
+    "pages/ResultPage",
+    "pages/LoginPage",
+    "pages/HistoryPage"
   ]
 }
