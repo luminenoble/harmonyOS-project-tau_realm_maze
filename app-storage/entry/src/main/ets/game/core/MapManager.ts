@@ -7,8 +7,10 @@ import { MazeGenerator, Rng } from '../../utils/MazeGenerator';
 // 行优先遍历的回调签名
 export type TileVisitor = (tile: Tile, col: number, row: number) => void;
 
-// 每对相邻层放置的 Via 数量（CLAUDE.md MVP 规定 2-3 个/层）
-const VIAS_PER_PAIR: number = 2;
+// 每对相邻层放置的 Via 数量
+// Day 7：上调到 3，让每层 VIA 总数 ≈ 3-6（CLAUDE.md MVP 区间 3-4），
+// 同时给 1:2:3 的 L1/L2/MEM 轮转分配留够样本量
+const VIAS_PER_PAIR: number = 3;
 // 每层信号碎片数（Day 5 起，CLAUDE.md MVP 规定 3 个/层）
 const FRAGMENTS_PER_LAYER: number = 3;
 // 每层逻辑门数（Day 5，MVP 阶段 1 个/层）
@@ -40,15 +42,18 @@ export class MapManager {
       this.layers.push(MazeGenerator.generate(cols, rows, layerSeed));
     }
 
-    // 用主 Rng 继续派生 Via / 逻辑门 / 碎片 / 散热通道 放置的随机性
-    // 顺序：VIA → GATE → FRAGMENT → THERMAL_VIA
+    // 用主 Rng 继续派生 Via / 逻辑门 / 碎片 / 散热通道 / 终点 放置的随机性
+    // 顺序：VIA → GATE → FRAGMENT → THERMAL_VIA → EXIT
     // - VIA 先占位避免后续 carve 错位
     // - GATE 先于 FRAGMENT：placeGates 用 BFS 校验 pre-GATE 区非空；placeFragments 据此 BFS 强制 1 碎片在 pre 区，断死锁
     // - THERMAL_VIA 最后落剩余 FLOOR；不参与连通性校验（即使被孤立也只是"少了一个缓解点"）
+    // - EXIT 最后放在顶层、距 (1,1) BFS 距离最大的 FLOOR cell，保证终点远离起点
     MazeGenerator.placeVias(this.layers, masterRng, VIAS_PER_PAIR);
     MazeGenerator.placeGates(this.layers, masterRng, GATES_PER_LAYER);
     MazeGenerator.placeFragments(this.layers, masterRng, FRAGMENTS_PER_LAYER);
     MazeGenerator.placeThermalVias(this.layers, masterRng, THERMALS_PER_LAYER);
+    // Day 7：顶层放置 1 个 EXIT 终点（远离起点）
+    MazeGenerator.placeExit(this.layers, masterRng);
   }
 
   // 越界返回 undefined；层号越界同样返回 undefined

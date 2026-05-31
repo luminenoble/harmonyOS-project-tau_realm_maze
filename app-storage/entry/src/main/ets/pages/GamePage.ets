@@ -5,9 +5,9 @@
 import { router } from '@kit.ArkUI';
 import { IsoConfig } from '../utils/IsoMath';
 import { drawMap, drawRestructurePulse } from '../game/render/IsoRenderer';
-import { drawFade, drawWarningOverlay } from '../game/render/UIOverlay';
+import { drawFade, drawWarningOverlay, drawViaProgressBar } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
-import { GameEngine } from '../game/core/GameEngine';
+import { GameEngine, VictoryStats } from '../game/core/GameEngine';
 
 @Entry
 @Component
@@ -41,6 +41,10 @@ struct GamePage {
   // 当前层热量（Day 6 散热）
   @State currentHeat: number = 0;
   @State heatMax: number = 100;
+  // Day 7：τ 仪表 + 跨层碎片总数（用于 HUD 全局进度提示）
+  @State tau: number = 0;
+  @State totalPicked: number = 0;
+  @State totalAll: number = 0;
 
   // 页面入场：构造引擎与地图
   aboutToAppear(): void {
@@ -67,6 +71,9 @@ struct GamePage {
     this.stepsUntilRestructure = this.engine.stepsUntilRestructure;
     this.currentHeat = this.engine.currentHeat;
     this.heatMax = this.engine.currentHeatMax;
+    this.tau = this.engine.tau;
+    this.totalPicked = this.engine.totalFragmentsPicked;
+    this.totalAll = this.engine.totalFragmentsAll;
     this.engine.setTickCallback(() => {
       const e: GameEngine = this.engine as GameEngine;
       // 转场 swap 后同步层号与本层碎片计数到 ArkUI（强制弹层与 VIA 切层都走这里）
@@ -85,12 +92,22 @@ struct GamePage {
       if (this.currentHeat !== newHeat) {
         this.currentHeat = newHeat;
       }
+      // Day 7：τ 仪表 + 全局碎片进度
+      const newTau: number = e.tau;
+      if (this.tau !== newTau) {
+        this.tau = newTau;
+      }
+      const newPicked: number = e.totalFragmentsPicked;
+      if (this.totalPicked !== newPicked) {
+        this.totalPicked = newPicked;
+      }
       this.renderMap();
     });
     this.engine.setFragmentPickedCallback((factText: string) => {
       const e: GameEngine = this.engine as GameEngine;
       this.currentFragments = e.currentFragments;
       this.currentFragmentTotal = e.currentFragmentTotal;
+      this.totalPicked = e.totalFragmentsPicked;
       AlertDialog.show({
         title: '信号碎片 +1',
         message: factText,
@@ -99,6 +116,25 @@ struct GamePage {
           value: '继续',
           action: () => {}
         }
+      });
+    });
+    // Day 7：EXIT 落点但条件不足时的提示
+    this.engine.setExitHintCallback((hint: string) => {
+      AlertDialog.show({
+        title: '终点未就绪',
+        message: hint,
+        autoCancel: true,
+        confirm: {
+          value: '继续探索',
+          action: () => {}
+        }
+      });
+    });
+    // Day 7：通关回调，路由跳 ResultPage
+    this.engine.setVictoryCallback((stats: VictoryStats) => {
+      router.replaceUrl({
+        url: 'pages/ResultPage',
+        params: stats
       });
     });
   }
@@ -148,6 +184,11 @@ struct GamePage {
 
     // Day 6 WARN：红色脉冲底 + "信号重路由中..."（仅 WARN 阶段 alpha>0）
     drawWarningOverlay(this.ctx, w, h, e.warnPulseAlpha);
+
+    // Day 7 VIA 等待：中央卡片进度条（仅 VIA_WAIT 阶段显示）
+    if (e.isViaWaiting) {
+      drawViaProgressBar(this.ctx, w, h, e.viaWaitTierValue, e.viaWaitProgress);
+    }
 
     // 转场黑屏覆盖（最后画）
     drawFade(this.ctx, w, h, e.transitionAlpha);
@@ -253,6 +294,23 @@ struct GamePage {
       Text(this.stepsUntilRestructure + ' 步')
         .fontSize(20)
         .fontColor('#ff9a40')
+        .margin({ top: 4, bottom: 24 })
+
+      // Day 7：τ 仪表 + 跨层碎片总数（终点解锁条件）
+      Text('τ 时延累计')
+        .fontSize(12)
+        .fontColor('#5a7088')
+      Text(this.tau + ' cyc')
+        .fontSize(20)
+        .fontColor('#22d3a8')
+        .margin({ top: 4, bottom: 24 })
+
+      Text('总碎片')
+        .fontSize(12)
+        .fontColor('#5a7088')
+      Text(this.totalPicked + ' / ' + this.totalAll)
+        .fontSize(16)
+        .fontColor('#ffd166')
         .margin({ top: 4 })
 
       Blank()

@@ -16,10 +16,15 @@ const COLOR_WALL_LEFT: string = '#2a1e0a';      // 近黑棕
 const COLOR_WALL_STROKE: string = '#0a0e1a';
 
 // VIA / GATE / FRAGMENT 色板
-const COLOR_VIA_UP: string = '#5ec0ff';        // 亮蓝：已解锁上行通孔
-const COLOR_VIA_DOWN: string = '#2a78c8';      // 暗蓝：下行通孔
+// Day 7：VIA 改为三级缓存配色 — L1 金 / L2 银 / MEM 铜（取代统一蓝色调）
+// 上下行用同 tier 同色（语义上同一通孔），锁定态仍统一灰
+const COLOR_VIA_L1: string = '#ffd24a';        // 金：L1 缓存（延迟 1）
+const COLOR_VIA_L2: string = '#d6dde6';        // 银：L2 缓存（延迟 3）
+const COLOR_VIA_MEM: string = '#c98b5b';       // 铜：主存（延迟 6）
+const COLOR_VIA_L1_RING: string = '#806014';
+const COLOR_VIA_L2_RING: string = '#5a6878';
+const COLOR_VIA_MEM_RING: string = '#603a18';
 const COLOR_VIA_LOCKED: string = '#5a5a5a';    // 灰：上行 VIA 锁定
-const COLOR_VIA_RING: string = '#1a4a7a';      // VIA 边圈
 const COLOR_VIA_RING_LOCKED: string = '#8a2020'; // 锁定 VIA 暗红警示圈
 const COLOR_GATE_LOCKED: string = '#d63b3b';   // 红：锁定逻辑门
 const COLOR_GATE_UNLOCKED: string = '#22d3a8'; // 青绿：已解锁门（淡色提示边框）
@@ -138,9 +143,10 @@ function drawMarker(
   ctx.fill();
 }
 
-// VIA 渲染：地板 + 方向感知三角箭头
-// up=true 表示上行（指向更高层号），三角朝上 + 亮蓝（锁定时灰 + 暗红圈）
-// up=false 表示下行，三角朝下 + 暗蓝（始终不锁）
+// VIA 渲染：地板 + 方向感知三角箭头 + tier 三色（金/银/铜）
+// up=true 上行（指向更高层号），三角朝上；up=false 下行，三角朝下
+// locked=true：填色与边圈换灰 + 暗红警示圈
+// tier：0=L1 金 / 1=L2 银 / 2=MEM 铜；其他值退化为 MEM 色
 export function drawVia(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -148,16 +154,28 @@ export function drawVia(
   halfW: number,
   halfH: number,
   up: boolean,
-  locked: boolean
+  locked: boolean,
+  tier: number
 ): void {
   drawFloor(ctx, cx, cy, halfW, halfH);
+
+  // 根据 tier 选填色与边圈色
+  let fillColor: string = COLOR_VIA_MEM;
+  let ringColor: string = COLOR_VIA_MEM_RING;
+  if (tier === 0) {
+    fillColor = COLOR_VIA_L1;
+    ringColor = COLOR_VIA_L1_RING;
+  } else if (tier === 1) {
+    fillColor = COLOR_VIA_L2;
+    ringColor = COLOR_VIA_L2_RING;
+  }
 
   // 边圈：方便玩家在远处也能识别 VIA；锁定时换暗红
   const ringR: number = Math.max(2, halfW * 0.55);
   ctx.beginPath();
   ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
-  ctx.lineWidth = 1.2;
-  ctx.strokeStyle = locked ? COLOR_VIA_RING_LOCKED : COLOR_VIA_RING;
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = locked ? COLOR_VIA_RING_LOCKED : ringColor;
   ctx.stroke();
 
   // 三角：尺寸约 cell 内切，朝向由 up 决定
@@ -174,11 +192,7 @@ export function drawVia(
     ctx.lineTo(cx - triW, cy - triH / 2);
   }
   ctx.closePath();
-  if (locked) {
-    ctx.fillStyle = COLOR_VIA_LOCKED;
-  } else {
-    ctx.fillStyle = up ? COLOR_VIA_UP : COLOR_VIA_DOWN;
-  }
+  ctx.fillStyle = locked ? COLOR_VIA_LOCKED : fillColor;
   ctx.fill();
 }
 
@@ -260,6 +274,48 @@ export function drawThermalVia(
   ctx.fill();
 }
 
+// EXIT 渲染：地板 + 青绿色钻石轮廓 + 内部菱形脉冲
+// 视觉差异：相比 VIA 三角，EXIT 用"立体钻石"双菱形 + 高饱和青绿，
+// 远看像"通讯链路终端"；区别 FRAGMENT 黄色实心 + GATE 红栅栏
+const COLOR_EXIT_FILL: string = '#22d3a8';
+const COLOR_EXIT_GLOW: string = '#7df7d4';
+const COLOR_EXIT_RING: string = '#0d6c52';
+
+export function drawExit(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  halfW: number,
+  halfH: number
+): void {
+  drawFloor(ctx, cx, cy, halfW, halfH);
+
+  // 外层大菱形（描边 + 半透明青绿填充）
+  const r1: number = 0.85;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - halfH * r1);
+  ctx.lineTo(cx + halfW * r1, cy);
+  ctx.lineTo(cx, cy + halfH * r1);
+  ctx.lineTo(cx - halfW * r1, cy);
+  ctx.closePath();
+  ctx.fillStyle = COLOR_EXIT_FILL;
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = COLOR_EXIT_RING;
+  ctx.stroke();
+
+  // 内层小菱形（高亮"光芯"）
+  const r2: number = 0.4;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - halfH * r2);
+  ctx.lineTo(cx + halfW * r2, cy);
+  ctx.lineTo(cx, cy + halfH * r2);
+  ctx.lineTo(cx - halfW * r2, cy);
+  ctx.closePath();
+  ctx.fillStyle = COLOR_EXIT_GLOW;
+  ctx.fill();
+}
+
 // 按瓦片类型分派绘制
 // currentLayer 用于 VIA 判定上行/下行（viaTarget > currentLayer 即上行）
 // 注意：WALL 会先绘制底下的 FLOOR（保持墙脚有 PCB 底色），再绘制墙块
@@ -282,7 +338,10 @@ export function drawTile(
       drawWall(ctx, cx, cy, halfW, halfH, wallH);
       break;
     case TileType.VIA:
-      drawVia(ctx, cx, cy, halfW, halfH, tile.viaTarget > currentLayer, tile.locked);
+      drawVia(
+        ctx, cx, cy, halfW, halfH,
+        tile.viaTarget > currentLayer, tile.locked, tile.viaTier
+      );
       break;
     case TileType.GATE:
       drawGate(ctx, cx, cy, halfW, halfH, tile.locked);
@@ -292,6 +351,9 @@ export function drawTile(
       break;
     case TileType.THERMAL_VIA:
       drawThermalVia(ctx, cx, cy, halfW, halfH);
+      break;
+    case TileType.EXIT:
+      drawExit(ctx, cx, cy, halfW, halfH);
       break;
     default:
       drawFloor(ctx, cx, cy, halfW, halfH);

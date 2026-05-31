@@ -90,6 +90,69 @@ export function drawFragmentBadge(
   ctx.fillText(text, x + padX, y + padY);
 }
 
+// Day 7：VIA 时钟周期等待进度条（中央卡片样式）
+// progress 0..1；tier 决定填色与文字标签（0=L1 金 / 1=L2 银 / 2=MEM 铜）
+// 卡片：半透明深底 + 顶部白字 "L1-VIA · 1 cycle" + 底部一条横向进度条
+const COLOR_VIA_BAR_BG: string = '#0a0e1add';
+const COLOR_VIA_BAR_BORDER: string = '#22d3a8';
+const COLOR_VIA_BAR_TRACK: string = '#1a2238';
+const COLOR_VIA_BAR_TEXT: string = '#e8f4ff';
+const VIA_BAR_TIER_COLORS: string[] = ['#ffd24a', '#d6dde6', '#c98b5b'];
+const VIA_BAR_TIER_LABELS: string[] = ['L1-VIA', 'L2-VIA', 'MEM-VIA'];
+const VIA_BAR_TIER_DELAYS: number[] = [1, 3, 6];
+
+export function drawViaProgressBar(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  tier: number,
+  progress: number
+): void {
+  if (tier < 0) {
+    return;
+  }
+  const p: number = progress < 0 ? 0 : (progress > 1 ? 1 : progress);
+
+  // 卡片尺寸（平板友好，固定大小居中）
+  const cardW: number = 320;
+  const cardH: number = 88;
+  const cardX: number = (w - cardW) / 2;
+  const cardY: number = (h - cardH) / 2;
+
+  // 1) 卡片底 + 描边
+  ctx.fillStyle = COLOR_VIA_BAR_BG;
+  ctx.fillRect(cardX, cardY, cardW, cardH);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = COLOR_VIA_BAR_BORDER;
+  ctx.strokeRect(cardX, cardY, cardW, cardH);
+
+  // 2) 顶部文字 "L1-VIA · 1 cycle"
+  const tierIdx: number = (tier >= 0 && tier < VIA_BAR_TIER_LABELS.length) ? tier : 2;
+  const label: string = VIA_BAR_TIER_LABELS[tierIdx]
+      + ' · ' + VIA_BAR_TIER_DELAYS[tierIdx] + ' cycle'
+      + (VIA_BAR_TIER_DELAYS[tierIdx] > 1 ? 's' : '');
+  ctx.fillStyle = COLOR_VIA_BAR_TEXT;
+  ctx.font = '16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText(label, cardX + cardW / 2, cardY + 16);
+
+  // 3) 进度条：轨道 + tier 色填充
+  const barH: number = 12;
+  const barX: number = cardX + 24;
+  const barY: number = cardY + cardH - 24;
+  const barW: number = cardW - 48;
+  ctx.fillStyle = COLOR_VIA_BAR_TRACK;
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.fillStyle = VIA_BAR_TIER_COLORS[tierIdx];
+  ctx.fillRect(barX, barY, barW * p, barH);
+
+  // 4) 状态还原（防 HarmonyOS Canvas alpha / textAlign 泄漏）
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.globalAlpha = 1;
+}
+
 // Day 6 重构警告：全屏红色 sin 脉冲 + 中央"信号重路由中..."文字
 // alpha 由 GameEngine.warnPulseAlpha 提供，介于 [0.15, 0.55] 区间（基础 0.35 ± 0.2）
 // 文字始终以 alpha=1 渲染，保证警告语义可读；避免随脉冲一起闪烁

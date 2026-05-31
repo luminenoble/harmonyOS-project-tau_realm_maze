@@ -3,6 +3,11 @@
 
 import { Tile, TileType } from '../game/types/TileType';
 
+// Day 7：VIA 三级缓存分配轮转表（L1=0 / L2=1 / MEM=2）
+// 6 槽 1:2:3 = 1 L1 + 2 L2 + 3 MEM；跨 pair 全局递增 idx 保证整张地图比例稳定
+// 内联在 MazeGenerator 内部（不从 ViaUnlock import）以避免 ViaUnlock → MapManager → MazeGenerator 循环依赖
+const VIA_TIER_ROTATION: number[] = [0, 1, 1, 2, 2, 2];
+
 // 可种子化随机数生成器，避免依赖不可复现的 Math.random
 // Day 4 导出供 MapManager 在多层种子分发时复用
 export class Rng {
@@ -128,6 +133,9 @@ export class MazeGenerator {
     const rows: number = layers[0].length;
     const cols: number = layers[0][0].length;
 
+    // Day 7：跨 pair 全局滚动索引，让 L1:L2:MEM 在整张地图上保持 1:2:3
+    let viaTierIdx: number = 0;
+
     for (let L = 0; L < layerCount - 1; L++) {
       const upper: number = L + 1;
       // 阶段 1：收集两层共同 FLOOR 的候选
@@ -175,13 +183,141 @@ export class MazeGenerator {
 
       // 阶段 4：写回 VIA 标记
       // Day 5 起：下层→上行 VIA 默认锁定（需当前层碎片全收集才解锁）；上层→下行 VIA 不锁
+      // Day 7 起：每个 VIA pair 从全局 ROTATION 取 tier；上下行同坐标共享同 tier
       for (let i = 0; i < k; i++) {
         const c: number = candidates[i][0];
         const r: number = candidates[i][1];
-        layers[L][r][c] = new Tile(TileType.VIA, upper, true);     // 下层 → 上行（locked）
-        layers[upper][r][c] = new Tile(TileType.VIA, L, false);    // 上层 → 下行（unlocked）
+        const tier: number = VIA_TIER_ROTATION[viaTierIdx % VIA_TIER_ROTATION.length];
+        viaTierIdx++;
+        layers[L][r][c] = new Tile(TileType.VIA, upper, true, tier);    // 下层 → 上行（locked）
+        layers[upper][r][c] = new Tile(TileType.VIA, L, false, tier);   // 上层 → 下行（unlocked）
       }
     }
+  }
+
+  // Day 7：在顶层放置 1 个 EXIT 终点
+  // 候选：顶层从 (1,1) 出发 BFS 可达的全部 FLOOR cell（GATE 视为可通行 = 假定将来都能解开）
+  // 选取距离最大的若干 cell（≥ 距离最大值 ×0.8），从中随机 1 个，让终点远离起点
+  // 极端兜底：候选为空 → 强制 (cols-2, rows-2) carve 为 FLOOR 再放 EXIT
+  static placeExit(layers: Tile[][][], rng: Rng): void {
+    const layerCount: number = layers.length;
+    if (layerCount === 0) {
+      return;
+    }
+    const topLayer: number = layerCount - 1;
+    const layer: Tile[][] = layers[topLayer];
+    const rows: number = layer.length;
+    const cols: number = layer[0].length;
+
+    // BFS 距离图：起点 (1,1)，GATE 视为可通行
+    const dist: number[][] = MazeGenerator.bfsDistance(layer, 1, 1, false);
+
+    // 收集所有"可达且当前为 FLOOR"的 cell + 距离
+    let maxDist: number = 0;
+    const reachable: number[][] = [];   // [c, r, dist]
+    for (let r = 1; r < rows - 1; r++) {
+      for (let c = 1; c < cols - 1; c++) {
+        if (c === 1 && r === 1) {
+          continue;
+        }
+        if (layer[r][c].type !== TileType.FLOOR) {
+          continue;
+        }
+        const d: number = dist[r][c];
+        if (d < 0) {
+          continue;
+        }
+        reachable.push([c, r, d]);
+        if (d > maxDist) {
+          maxDist = d;
+        }
+      }
+    }
+
+    // 候选筛选：距离 ≥ maxDist × 0.8 的远端 cell；若不足则全集
+    const threshold: number = Math.floor(maxDist * 0.8);
+    let far: number[][] = [];
+    for (let i = 0; i < reachable.length; i++) {
+      if (reachable[i][2] >= threshold) {
+        far.push(reachable[i]);
+      }
+    }
+    if (far.length === 0) {
+      far = reachable;
+    }
+
+    if (far.length > 0) {
+      const idx: number = rng.nextInt(far.length);
+      const c: number = far[idx][0];
+      const r: number = far[idx][1];
+      layer[r][c] = new Tile(TileType.EXIT);
+      return;
+    }
+
+    // 兜底：连一个 FLOOR 也没找到（理论不发生）→ 强 carve (cols-2, rows-2)
+    const fc: number = cols - 2;
+    const fr: number = rows - 2;
+    layer[fr][fc] = new Tile(TileType.EXIT);
+  }
+
+  // BFS 距离图：每格记录到 (sc, sr) 的最短步数；不可达为 -1
+  // 通行规则：WALL 阻挡；GATE 按 gatesBlock 决定（默认 true 锁定 GATE 视为墙）
+  // 与 bfsReachable 同步：返回距离 vs 仅可达 bool
+  private static bfsDistance(
+    layer: Tile[][],
+    sc: number,
+    sr: number,
+    gatesBlock: boolean = true
+  ): number[][] {
+    const rows: number = layer.length;
+    const cols: number = layer[0].length;
+    const dist: number[][] = [];
+    for (let r = 0; r < rows; r++) {
+      const row: number[] = [];
+      for (let c = 0; c < cols; c++) {
+        row.push(-1);
+      }
+      dist.push(row);
+    }
+    if (sr < 0 || sr >= rows || sc < 0 || sc >= cols) {
+      return dist;
+    }
+    const start: Tile = layer[sr][sc];
+    if (start.type === TileType.WALL) {
+      return dist;
+    }
+    dist[sr][sc] = 0;
+    const qx: number[] = [sc];
+    const qy: number[] = [sr];
+    let head: number = 0;
+    const dirs: number[][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    while (head < qx.length) {
+      const c: number = qx[head];
+      const r: number = qy[head];
+      head++;
+      const cd: number = dist[r][c];
+      for (let d = 0; d < 4; d++) {
+        const nc: number = c + dirs[d][0];
+        const nr: number = r + dirs[d][1];
+        if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) {
+          continue;
+        }
+        if (dist[nr][nc] >= 0) {
+          continue;
+        }
+        const t: Tile = layer[nr][nc];
+        if (t.type === TileType.WALL) {
+          continue;
+        }
+        if (gatesBlock && t.type === TileType.GATE && t.locked) {
+          continue;
+        }
+        dist[nr][nc] = cd + 1;
+        qx.push(nc);
+        qy.push(nr);
+      }
+    }
+    return dist;
   }
 
   // 为每层放置逻辑门（GATE，默认 locked）— 调用顺序：必须在 placeFragments 之前
