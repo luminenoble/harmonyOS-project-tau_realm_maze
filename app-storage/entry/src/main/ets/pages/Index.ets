@@ -5,6 +5,7 @@ import {
   getCurrentUserId, getCurrentUser, getCurrentTitle,
   getUnlockedTitles, selectTitle, logout
 } from '../utils/UserSession';
+import { MusicPanel } from '../components/MusicPanel';
 
 @Entry
 @Component
@@ -197,6 +198,12 @@ struct Index {
           this.showTitlePicker = false;
         })
       }
+
+      // 右下角音乐面板
+      Column() {
+        MusicPanel()
+      }
+      .position({ right: 24, bottom: 24 })
     }
     .width('100%')
     .height('100%')

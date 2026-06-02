@@ -43,6 +43,7 @@ D:\wsl-share\harmony-game\        ← 工作区根目录（WSL 挂载路径：/m
 - `docs/dayN/`：每个开发日的工作子目录
   - 开工前 Claude Code 先在 `docs/dayN/dayN-plan.md` 写实施计划（目标拆解、文件清单、技术要点、风险），再开始编码
   - 调研、设计草图、问题排查记录也按天归档到对应子目录
+- `docs/<feature>/`：feature 子目录（如 `docs/music/`、`docs/DB/`），存放跨天的专题计划与排查笔记
 
 ### 远端仓库
 
@@ -139,6 +140,27 @@ tsc --noEmit --allowJs --target ES2017 \
 - **AI 结算评语（方案 A）**：结算时将路径数据格式化为 prompt 传入 AI，生成"芯片工程师视角"的路径评语；演示版使用占位实现，接口预留（`AIComment.ts`）
 - **场景交互**：点击交互对象触发芯片知识科普文本，无战斗系统
 
+## 用户系统 & 数据持久化（SQLite）
+
+基于 HarmonyOS `@kit.ArkData` 的 `relationalStore`，本地 SQLite 持久化用户与游戏记录。
+
+- **入口**：`utils/DbHelper.ts`（数据库初始化 + 用户/记录表 CRUD），`utils/UserSession.ts`（登录态 + 当前用户缓存）
+- **页面**：`pages/LoginPage.ets`（昵称登录/游客模式），`pages/HistoryPage.ets`（历史记录 + 称号解锁）
+- **登录态持久化**：`PersistentStorage.persistProp<number>('currentUserId')`，重启后自动恢复；`EntryAbility.onWindowStageCreate` 据此决定首页（已登录 → `Index`，否则 → `LoginPage`）
+- **数据表**：`UserRecord`（id / nickname / isGuest / titleIndex / 时间戳）和 `GameRecord`（id / userId / steps / tauVia / tau / rating）
+- **称号系统**：基于历史最佳评级（S/A/B/C）解锁等级称号，由 `TITLE_LIST` + `getMaxTitleIndex` 控制可选范围
+- **DB 初始化**：`EntryAbility.onCreate` 调 `initDb(this.context)` 异步建表，幂等
+
+## 音乐播放系统
+
+基于 `@kit.MediaKit` 的 `AVPlayer` + `@kit.CoreFileKit` 的 `AudioViewPicker`，支持内置曲库 + 用户自选音乐，跨页面共享同一播放实例。
+
+- **入口**：`utils/MusicService.ts`（单例服务，AVPlayer 状态机管理 / 播放列表 / 音量 / Preferences 持久化），`components/MusicPanel.ets`（可复用浮动音乐面板组件）
+- **初始化**：`EntryAbility.onCreate` 调 `getMusicService().init(this.context)`，扫描 `resources/rawfile/music/` 作为内置曲目（不可删除），并从 Preferences 恢复用户曲目和音量
+- **AVPlayer 状态机**（HarmonyOS 特性）：`idle → initialized (设源后) → prepared (prepare() 后) → playing (play() 后)`；`stateChange` 回调中必须显式调 `prepare()`，否则永远卡在 initialized 不出声
+- **持久化**：`@kit.ArkData` 的 `preferences`，保存音量（KEY_VOLUME）与用户添加的曲目（KEY_USER_TRACKS，JSON 序列化）
+- **UI 接入**：`Index.ets` 和 `GamePage.ets` 右下角均挂载 `MusicPanel` 组件；切页面时 AVPlayer 实例不销毁，播放连续
+
 ## 项目架构（DevEco 工程内部）
 
 ```
@@ -146,9 +168,13 @@ app-storage/entry/
 └── src/main/
     ├── ets/
     │   ├── pages/
-    │   │   ├── Index.ets          # 主菜单页
-    │   │   ├── GamePage.ets       # 游戏主页面（Canvas 宿主）
+    │   │   ├── Index.ets          # 主菜单页（含称号选择 + 音乐面板）
+    │   │   ├── LoginPage.ets      # 登录页（昵称登录 / 游客模式）
+    │   │   ├── HistoryPage.ets    # 历史记录页（游戏记录 + 称号解锁）
+    │   │   ├── GamePage.ets       # 游戏主页面（Canvas 宿主 + 音乐面板）
     │   │   └── ResultPage.ets     # 通关结算页（含τ评级 & AI评语）
+    │   ├── components/
+    │   │   └── MusicPanel.ets     # 可复用音乐面板（浮动按钮 + 展开式控制 / 列表）
     │   ├── game/
     │   │   ├── core/
     │   │   │   ├── GameEngine.ts  # 游戏主循环、状态机
@@ -165,9 +191,13 @@ app-storage/entry/
     │   └── utils/
     │       ├── MazeGenerator.ts   # 随机迷宫生成（递归回溯算法）
     │       ├── IsoMath.ts         # 等距坐标与屏幕坐标互转工具
-    │       └── AIComment.ts       # AI 结算评语接口（演示版占位，接口预留）
+    │       ├── AIComment.ts       # AI 结算评语接口（演示版占位，接口预留）
+    │       ├── DbHelper.ts        # SQLite 数据库：用户表 / 游戏记录表 CRUD
+    │       ├── UserSession.ts     # 登录态持久化 + 当前用户缓存 + 称号管理
+    │       └── MusicService.ts    # 音乐服务单例（AVPlayer / 播放列表 / 音量 / 持久化）
     └── resources/
-        ├── rawfile/               # 地图数据 JSON
+        ├── rawfile/
+        │   └── music/             # 内置音乐资源（启动时自动扫描加载）
         └── media/                 # 像素风瓦片图（芯片电路风格）
 ```
 

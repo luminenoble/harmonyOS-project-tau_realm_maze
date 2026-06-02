@@ -8,6 +8,7 @@ import { drawMap, drawRestructurePulse } from '../game/render/IsoRenderer';
 import { drawFade, drawWarningOverlay, drawViaProgressBar, drawShutterFold } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine, VictoryStats } from '../game/core/GameEngine';
+import { MusicPanel } from '../components/MusicPanel';
 
 @Entry
 @Component
@@ -381,6 +382,12 @@ struct GamePage {
           })
 
         this.DPad()
+
+        // 右下角音乐面板（D-Pad 左侧）
+        Column() {
+          MusicPanel()
+        }
+        .position({ left: 24, bottom: 24 })
       }
       .layoutWeight(1)
       .height('100%')

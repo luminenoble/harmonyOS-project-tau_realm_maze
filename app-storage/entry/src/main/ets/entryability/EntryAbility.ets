@@ -3,6 +3,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { initDb } from '../utils/DbHelper';
 import { initSession, isLoggedIn } from '../utils/UserSession';
+import { getMusicService } from '../utils/MusicService';
 
 const DOMAIN = 0x0000;
 
@@ -18,6 +19,10 @@ export default class EntryAbility extends UIAbility {
     // 初始化数据库
     initDb(this.context).catch((err: Error) => {
       hilog.error(DOMAIN, 'testTag', 'Failed to init DB: %{public}s', err.message);
+    });
+    // 初始化音乐服务（加载内置曲目 + 恢复用户偏好）
+    getMusicService().init(this.context).catch((err: Error) => {
+      hilog.error(DOMAIN, 'testTag', 'Failed to init MusicService: %{public}s', err.message);
     });
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
   }
