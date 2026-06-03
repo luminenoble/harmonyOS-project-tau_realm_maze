@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "TauRealmMaze"
+    },
+    {
+      "name": "reason_internet",
+      "value": "结算时调用 DeepSeek 生成芯片工程师评语"
     }
   ]
 }

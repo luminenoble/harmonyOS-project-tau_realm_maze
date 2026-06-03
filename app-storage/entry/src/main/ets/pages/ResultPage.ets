@@ -87,7 +87,11 @@ struct ResultPage {
       l2: this.l2,
       mem: this.mem,
       heatPeak: this.heatPeak,
-      rating: this.rating()
+      rating: this.rating(),
+      optimalTau: this.optimalTau,
+      optimalSteps: this.optimalSteps,
+      optimalViaTiers: this.optimalViaTiers,
+      playerViaTiers: this.playerViaTiers
     };
     getAIComment(stats)
       .then((text: string) => {
