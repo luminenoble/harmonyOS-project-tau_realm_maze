@@ -209,9 +209,29 @@ interface OptimalResult { optimalTau: number; events: PathEvent[]; viaChoices: n
 - [ ] ③ 补 key 后真实返回评语；无 key 自动降级占位；断网不崩。
 - [ ] DevEco Build 通过（WSL 不编译，由开发者侧验证循环）。
 
-## 6. 待确认 / 开放问题
+## 6. 已确认决策（用户拍板）
 
-1. 碎片是否也改交互拾取，还是仅 VIA？（计划：仅 VIA + EXIT 交互，碎片保持踩即 LOAD）
-2. CPI 分母用"起局初始最优"还是"实时最优"？（计划：起局初始，保证可复现）
-3. DeepSeek key 存放：`ApiConfig.ts` 空串 + 用户本地填，还是走 Preferences 运行时输入？（计划：先常量空串，最简）
-4. "走线优化 %" 是否替换为"流水线效率 %"文案？
+1. **碎片保持踩即 LOAD**；仅 VIA + EXIT 改交互触发。✅ 已实现
+2. **CPI 分母用起局初始最优**（`GameEngine` 构造时求解一次，不随重构重算），保证可复现。✅ 已实现
+3. **DeepSeek key 走 `ApiConfig.ts` 空串本地填**；提交保持空，无 key 自动降级占位。✅ 已实现
+4. **"走线优化 %" 替换为"流水线效率 %"**（= 最优 τ / 实际 τ）。✅ 已实现
+
+## 7. 实现记录（commit 序列，分支 feat/score-algorithm）
+
+| commit | 内容 |
+|--------|------|
+| `docs(score)` | 本计划文档 |
+| `feat(via)` | VIA/EXIT 交互触发：tryInteract + EXEC 按钮 + 落点金色描边 |
+| `feat(score)` | PathOptimizer 最优路径求解 + GameEngine 接入 + VictoryStats 扩展 |
+| `refactor(game)` | Semantics.ts 机器指令世界观 + CPI 评级 + HUD/结算术语 |
+| `feat(ai)` | DeepSeek HTTP 接入 + 最优差值 prompt + INTERNET 权限 + ApiConfig |
+
+### 关键正确性校验
+- VIA 在相邻层**同坐标配对**（`MazeGenerator.placeVias`：下层上行锁定 / 上层同坐标下行解锁 / 共享 tier）
+  → 求解器递归入口 `(via.col, via.row)` 落在下一层可走 VIA 格，层链正确。
+- 玩家 τ = stepCount + tauVia，与 optimalτ = BFS步数和 + tier延迟和 口径一致，CPI 可比。
+
+### 待开发者侧验证（WSL 不编译）
+- DevEco Build → Make Module，按报错回灌修复。
+- 潜在 ArkTS 点：`AIComment.callDeepSeek` 内 http options 的 `header` 内联对象字面量（官方文档写法，正常应通过；若报 `arkts-no-untyped-obj-literals` 再改 typed wrapper）。
+- 真机/模拟器需放行出网；填入 `DEEPSEEK_API_KEY` 后验证真实评语，断网验证降级。
