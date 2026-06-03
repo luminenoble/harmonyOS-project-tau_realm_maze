@@ -11,6 +11,7 @@ import { pickFact } from '../data/ChipFacts';
 import { Restructurer, RestructureResult } from './Restructurer';
 import { HeatManager } from './HeatManager';
 import { Rng } from '../../utils/MazeGenerator';
+import { PathOptimizer, OptimalResult } from './PathOptimizer';
 
 // tick 回调类型
 export type TickCallback = () => void;
@@ -22,18 +23,26 @@ export type ExitHintCallback = (hint: string) => void;
 export type VictoryCallback = (stats: VictoryStats) => void;
 
 // 通关结算数据；ResultPage 通过 router params 解析展示
+// score-algorithm：新增最优路径对照字段，CPI = tau / optimalTau，AI 评语据差值生成
 export class VictoryStats {
-  steps: number;        // 累计移动步数
-  tauVia: number;       // 所有 VIA 延迟累计（时钟周期）
-  tau: number;          // 总 τ = steps + tauVia
-  l1: number;           // L1-VIA 使用次数
+  steps: number;          // 累计移动步数（玩家实际）
+  tauVia: number;         // 所有 VIA 延迟累计（时钟周期）
+  tau: number;            // 总 τ = steps + tauVia（玩家实际）
+  l1: number;             // L1-VIA 使用次数
   l2: number;
   mem: number;
-  heatPeak: number[];   // 各层热量峰值
+  heatPeak: number[];     // 各层热量峰值
+  optimalTau: number;     // 理论最小总周期（起局求解，CPI 分母）
+  optimalSteps: number;   // 理论最优移动步数
+  optimalDelay: number;   // 理论最优 VIA 延迟累计
+  optimalViaTiers: number[];  // 最优各层上行应选 tier（0/1/2）
+  playerViaTiers: number[];   // 玩家各层上行实际选用 tier（按时序）
 
   constructor(
     steps: number, tauVia: number, tau: number,
-    l1: number, l2: number, mem: number, heatPeak: number[]
+    l1: number, l2: number, mem: number, heatPeak: number[],
+    optimalTau: number, optimalSteps: number, optimalDelay: number,
+    optimalViaTiers: number[], playerViaTiers: number[]
   ) {
     this.steps = steps;
     this.tauVia = tauVia;
@@ -42,6 +51,11 @@ export class VictoryStats {
     this.l2 = l2;
     this.mem = mem;
     this.heatPeak = heatPeak;
+    this.optimalTau = optimalTau;
+    this.optimalSteps = optimalSteps;
+    this.optimalDelay = optimalDelay;
+    this.optimalViaTiers = optimalViaTiers;
+    this.playerViaTiers = playerViaTiers;
   }
 }
 
@@ -106,6 +120,10 @@ export class GameEngine {
   // 防止 EXIT 被多次触发的通关锁
   private _victoryFired: boolean;
 
+  // score-algorithm：起局求解的理论最优 + 玩家实际 VIA tier 时序（评分对照）
+  private _optimal: OptimalResult;
+  private _playerViaTiers: number[];
+
   // 上一轮重构改动的 cell 列表（PULSE 阶段渲染层用）
   private _lastOpened: number[][];
   private _lastClosed: number[][];
@@ -162,6 +180,10 @@ export class GameEngine {
       this._heatPeak.push(0);
     }
     this._victoryFired = false;
+
+    // score-algorithm：起局求解理论最优 τ（作为 CPI 基准，全程不再重算）
+    this._optimal = PathOptimizer.solve(map, startCol, startRow);
+    this._playerViaTiers = [];
 
     // 统计每层 FRAGMENT 初始总数
     this._fragments = [];
@@ -226,6 +248,15 @@ export class GameEngine {
 
   get tauVia(): number {
     return this._tauVia;
+  }
+
+  // score-algorithm：理论最优 τ（CPI 基准）+ 是否成功求解，供 HUD/结算引用
+  get optimalTau(): number {
+    return this._optimal.optimalTau;
+  }
+
+  get optimalSolvable(): boolean {
+    return this._optimal.solvable;
   }
 
   // 跨层碎片总和（用于 EXIT 通关条件）
@@ -428,6 +459,8 @@ export class GameEngine {
       if (tier >= 0 && tier < 3) {
         this._viaCounts[tier]++;
       }
+      // 记录玩家缓存选择时序，供结算对照最优 tier 序列
+      this._playerViaTiers.push(tier);
       const delay: number = ViaUnlock.getTierDelay(tier);
       this._tauVia += delay;
       // 进 VIA_WAIT；速率按 delay 反比，让 MEM 等得更久
@@ -593,9 +626,20 @@ export class GameEngine {
     for (let i = 0; i < this._heatPeak.length; i++) {
       peakCopy.push(this._heatPeak[i]);
     }
+    // score-algorithm：拷贝最优 tier 序列 + 玩家 tier 序列，随结算下发
+    const optTiersCopy: number[] = [];
+    for (let i = 0; i < this._optimal.viaTiers.length; i++) {
+      optTiersCopy.push(this._optimal.viaTiers[i]);
+    }
+    const playerTiersCopy: number[] = [];
+    for (let i = 0; i < this._playerViaTiers.length; i++) {
+      playerTiersCopy.push(this._playerViaTiers[i]);
+    }
     const stats: VictoryStats = new VictoryStats(
       this._stepCount, this._tauVia, this.tau,
-      this._viaCounts[0], this._viaCounts[1], this._viaCounts[2], peakCopy
+      this._viaCounts[0], this._viaCounts[1], this._viaCounts[2], peakCopy,
+      this._optimal.optimalTau, this._optimal.optimalSteps, this._optimal.optimalDelay,
+      optTiersCopy, playerTiersCopy
     );
     this.phase = EnginePhase.IDLE;
     // 停 loop，等待 GamePage 路由跳转
