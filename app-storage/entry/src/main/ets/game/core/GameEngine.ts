@@ -366,6 +366,94 @@ export class GameEngine {
     return true;
   }
 
+  // score-algorithm：玩家当前落点瓦片（IDLE 交互判定共用）
+  private currentTile(): Tile | undefined {
+    return this.map.getTile(this.player.col, this.player.row, this._currentLayer);
+  }
+
+  // 当前落点是否可激活（VIA 已解锁 / EXIT）；UI 据此点亮 EXEC 按钮
+  get canInteract(): boolean {
+    if (this.phase !== EnginePhase.IDLE) {
+      return false;
+    }
+    const tile: Tile | undefined = this.currentTile();
+    if (tile === undefined) {
+      return false;
+    }
+    if (tile.type === TileType.VIA && tile.viaTarget >= 0) {
+      return ViaUnlock.canTrigger(tile, this._currentLayer, this._fragments[this._currentLayer]);
+    }
+    // EXIT 始终可"尝试"激活：碎片不足时按下给提示
+    if (tile.type === TileType.EXIT) {
+      return true;
+    }
+    return false;
+  }
+
+  // 落点交互类型提示，供 UI 决定按钮文案：'' / 'EXIT' / 'VIA0'|'VIA1'|'VIA2'（数字=tier）
+  get interactHint(): string {
+    if (!this.canInteract) {
+      return '';
+    }
+    const tile: Tile | undefined = this.currentTile();
+    if (tile === undefined) {
+      return '';
+    }
+    if (tile.type === TileType.EXIT) {
+      return 'EXIT';
+    }
+    if (tile.type === TileType.VIA) {
+      return 'VIA' + tile.viaTier;
+    }
+    return '';
+  }
+
+  // 玩家主动激活当前落点：VIA → 缓存命中等待 + 切层；EXIT → 写回通关 / 碎片不足提示
+  // 仅 IDLE 接受；非可交互格返回 false。原落点自动触发逻辑迁移至此
+  tryInteract(): boolean {
+    if (this.phase !== EnginePhase.IDLE) {
+      return false;
+    }
+    const tile: Tile | undefined = this.currentTile();
+    if (tile === undefined) {
+      return false;
+    }
+
+    // VIA：已解锁 → 累计 tier 使用 + τ 延迟，进 VIA_WAIT
+    if (tile.type === TileType.VIA && tile.viaTarget >= 0) {
+      if (!ViaUnlock.canTrigger(tile, this._currentLayer, this._fragments[this._currentLayer])) {
+        return false;
+      }
+      const tier: number = tile.viaTier;
+      if (tier >= 0 && tier < 3) {
+        this._viaCounts[tier]++;
+      }
+      const delay: number = ViaUnlock.getTierDelay(tier);
+      this._tauVia += delay;
+      // 进 VIA_WAIT；速率按 delay 反比，让 MEM 等得更久
+      this.viaWaitTier = tier;
+      this.viaWaitT = 0;
+      this.viaWaitSpeed = 1 / (delay * VIA_TICKS_PER_DELAY);
+      this.phase = EnginePhase.VIA_WAIT;
+      // IDLE 时 loop 已停，需重新拉起以推进 VIA_WAIT → 切层
+      this.startLoop();
+      return true;
+    }
+
+    // EXIT：集齐全部碎片 → 写回（WB）通关；否则提示一次
+    if (tile.type === TileType.EXIT) {
+      if (this.totalFragmentsPicked >= this.totalFragmentsAll) {
+        this.fireVictory();
+        return true;
+      }
+      const lack: number = this.totalFragmentsAll - this.totalFragmentsPicked;
+      this.onExitHint('终点链路已就位，但还差 ' + lack + ' 个信号碎片。');
+      return false;
+    }
+
+    return false;
+  }
+
   // 推进一帧：根据当前 phase 分派
   private advance(): void {
     if (this.phase === EnginePhase.MOVING) {
@@ -481,41 +569,9 @@ export class GameEngine {
       return;
     }
 
-    // 3) VIA：解锁则进入 VIA_WAIT 等待对应延迟后切层；锁定则停在原地
-    if (tile.type === TileType.VIA && tile.viaTarget >= 0) {
-      if (ViaUnlock.canTrigger(tile, this._currentLayer, this._fragments[this._currentLayer])) {
-        // Day 7：累计 tier 使用 + τ 延迟
-        const tier: number = tile.viaTier;
-        if (tier >= 0 && tier < 3) {
-          this._viaCounts[tier]++;
-        }
-        const delay: number = ViaUnlock.getTierDelay(tier);
-        this._tauVia += delay;
-        // 进 VIA_WAIT；速率按 delay 反比，让 MEM 等得更久
-        this.viaWaitTier = tier;
-        this.viaWaitT = 0;
-        this.viaWaitSpeed = 1 / (delay * VIA_TICKS_PER_DELAY);
-        this.phase = EnginePhase.VIA_WAIT;
-        // 切层期不触发重构，等 TRANSITION_IN 末尾再判
-        return;
-      }
-    }
-
-    // 4) EXIT：集齐全部碎片才通关，否则提示一次
-    if (tile.type === TileType.EXIT) {
-      if (this.totalFragmentsPicked >= this.totalFragmentsAll) {
-        this.fireVictory();
-        return;
-      }
-      const lack: number = this.totalFragmentsAll - this.totalFragmentsPicked;
-      this.onExitHint('终点链路已就位，但还差 ' + lack + ' 个信号碎片。');
-      this.phase = EnginePhase.IDLE;
-      if (this.maybeForcePop()) {
-        return;
-      }
-      this.maybeStartRestructure();
-      return;
-    }
+    // 3) VIA / EXIT：score-algorithm 起改为「落点不自动触发」，需玩家按激活键
+    //    缓存命中（L1$/L2$/DRAM）与写回（WB）都是指令的显式动作，见 tryInteract()
+    //    这里仅停在格上回 IDLE，由 UI 点亮激活按钮等待玩家确认
 
     this.phase = EnginePhase.IDLE;
     // 检查过热强制弹层（优先级高于重构）

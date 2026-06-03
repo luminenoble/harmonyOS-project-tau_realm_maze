@@ -4,7 +4,7 @@
 // Day 4：3 层迷宫 + Via 切层；Day 5：碎片拾取 / 逻辑门 / 科普 Dialog；Day 5 末：平板专用排版
 import { router } from '@kit.ArkUI';
 import { IsoConfig } from '../utils/IsoMath';
-import { drawMap, drawRestructurePulse } from '../game/render/IsoRenderer';
+import { drawMap, drawRestructurePulse, drawInteractHighlight } from '../game/render/IsoRenderer';
 import { drawFade, drawWarningOverlay, drawViaProgressBar, drawShutterFold } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine, VictoryStats } from '../game/core/GameEngine';
@@ -46,6 +46,9 @@ struct GamePage {
   @State tau: number = 0;
   @State totalPicked: number = 0;
   @State totalAll: number = 0;
+  // score-algorithm：当前落点是否可激活（VIA/EXIT）+ 交互类型提示（驱动 EXEC 按钮）
+  @State canInteract: boolean = false;
+  @State interactHint: string = '';
 
   // 页面入场：构造引擎与地图
   aboutToAppear(): void {
@@ -75,6 +78,8 @@ struct GamePage {
     this.tau = this.engine.tau;
     this.totalPicked = this.engine.totalFragmentsPicked;
     this.totalAll = this.engine.totalFragmentsAll;
+    this.canInteract = this.engine.canInteract;
+    this.interactHint = this.engine.interactHint;
     this.engine.setTickCallback(() => {
       const e: GameEngine = this.engine as GameEngine;
       // 转场 swap 后同步层号与本层碎片计数到 ArkUI（强制弹层与 VIA 切层都走这里）
@@ -101,6 +106,15 @@ struct GamePage {
       const newPicked: number = e.totalFragmentsPicked;
       if (this.totalPicked !== newPicked) {
         this.totalPicked = newPicked;
+      }
+      // score-algorithm：落点交互态同步（点亮/熄灭 EXEC 按钮）
+      const ci: boolean = e.canInteract;
+      if (this.canInteract !== ci) {
+        this.canInteract = ci;
+      }
+      const ih: string = e.interactHint;
+      if (this.interactHint !== ih) {
+        this.interactHint = ih;
       }
       this.renderMap();
     });
@@ -181,6 +195,14 @@ struct GamePage {
       e.lastOpenedCells, e.lastClosedCells, e.pulseAlpha, wallH
     );
 
+    // score-algorithm：落点可激活时画金色脉冲描边，提示按 EXEC
+    if (e.canInteract) {
+      drawInteractHighlight(
+        this.ctx, cfg, e.currentLayer, e.player.col, e.player.row,
+        (Date.now() % 1600) / 1600
+      );
+    }
+
     // 平板布局把 HUD 全部移到左侧 Column，Canvas 上不再叠 label / badge
 
     // Day 6 WARN：红色脉冲底 + "信号重路由中..."（仅 WARN 阶段 alpha>0）
@@ -221,6 +243,25 @@ struct GamePage {
       return;
     }
     (this.engine as GameEngine).tryMove(dCol, dRow);
+  }
+
+  // score-algorithm：EXEC 激活键 → 触发当前落点 VIA 切层 / EXIT 写回
+  private handleInteract(): void {
+    if (this.engine === null) {
+      return;
+    }
+    (this.engine as GameEngine).tryInteract();
+  }
+
+  // EXEC 按钮文案：按落点类型区分（Day 9 语义重构后改 L1$/WB 等术语）
+  private interactLabel(): string {
+    if (this.interactHint === 'EXIT') {
+      return '✓ 激活终点';
+    }
+    if (this.interactHint.indexOf('VIA') === 0) {
+      return '⚡ 激活 VIA';
+    }
+    return '· 激活 ·';
   }
 
   // 热量阶梯色：≥80 红（过热）/ ≥50 黄（警示）/ 其余青绿（凉）
@@ -342,6 +383,18 @@ struct GamePage {
   @Builder
   DPad() {
     Column() {
+      // score-algorithm：EXEC 激活键，仅落点为已解锁 VIA / EXIT 时点亮
+      Button(this.interactLabel())
+        .width(132)
+        .height(44)
+        .fontSize(16)
+        .fontWeight(FontWeight.Bold)
+        .backgroundColor(this.canInteract ? '#ffd24a' : '#1a2238aa')
+        .fontColor(this.canInteract ? '#0a0e1a' : '#5a7088')
+        .enabled(this.canInteract)
+        .margin({ bottom: 14 })
+        .onClick(() => { this.handleInteract(); })
+
       Row() {
         Button('↑').width(56).height(48).fontSize(20)
           .backgroundColor('#1a2238dd').fontColor('#22d3a8')

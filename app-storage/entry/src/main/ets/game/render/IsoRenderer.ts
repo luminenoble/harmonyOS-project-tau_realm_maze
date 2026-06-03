@@ -209,3 +209,32 @@ export function drawRestructurePulse(
   // 状态还原，防 HarmonyOS Canvas alpha 泄漏
   ctx.globalAlpha = 1;
 }
+
+// score-algorithm：落点可激活提示（玩家站在已解锁 VIA / EXIT 上时）
+// 在该格地板层画一圈金色菱形描边，提示"按 EXEC 激活"
+// phase01 0..1 驱动呼吸透明度；IDLE 不重绘时定格为静态高亮，仍清晰可辨
+const COLOR_INTERACT_RING: string = '#ffd24a';
+
+export function drawInteractHighlight(
+  ctx: CanvasRenderingContext2D,
+  cfg: IsoConfig,
+  layer: number,
+  col: number,
+  row: number,
+  phase01: number
+): void {
+  const p: ScreenPoint = gridToScreen(col, row, layer, cfg);
+  // 呼吸透明度 [0.45, 0.95]
+  const a: number = 0.7 + 0.25 * Math.sin(phase01 * Math.PI * 2);
+  ctx.globalAlpha = a < 0 ? 0 : (a > 1 ? 1 : a);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = COLOR_INTERACT_RING;
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y - cfg.tileHalfH);
+  ctx.lineTo(p.x + cfg.tileHalfW, p.y);
+  ctx.lineTo(p.x, p.y + cfg.tileHalfH);
+  ctx.lineTo(p.x - cfg.tileHalfW, p.y);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
