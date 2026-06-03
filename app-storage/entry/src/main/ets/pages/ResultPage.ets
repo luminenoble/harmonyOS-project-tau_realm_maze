@@ -6,8 +6,10 @@ import { router } from '@kit.ArkUI';
 import { getAIComment, AIPromptStats } from '../utils/AIComment';
 import { insertGameRecord, initDb } from '../utils/DbHelper';
 import { getCurrentUserId } from '../utils/UserSession';
+import { cpiRating, ratingTagline, layerName, tierShort } from '../game/data/Semantics';
 
 // 通过 router.getParams() 传入的结构；字段必须与 GameEngine.VictoryStats 对齐
+// score-algorithm：新增最优路径对照字段，CPI = tau / optimalTau
 interface ResultParams {
   steps: number;
   tauVia: number;
@@ -16,15 +18,11 @@ interface ResultParams {
   l2: number;
   mem: number;
   heatPeak: number[];
+  optimalTau: number;
+  optimalSteps: number;
+  optimalViaTiers: number[];
+  playerViaTiers: number[];
 }
-
-// τ 评级阈值（MVP）：理想路径 ≈ 60-80，A 路径 100 左右
-// S: τ ≤ 80；A ≤ 120；B ≤ 180；C 其他
-const TAU_THRESHOLD_S: number = 80;
-const TAU_THRESHOLD_A: number = 120;
-const TAU_THRESHOLD_B: number = 180;
-// "走线优化 X%" 基准：以 A 阈值为 0% 参考线，τ 越低百分比越高
-const OPTIMIZATION_BASELINE: number = 120;
 
 @Entry
 @Component
@@ -37,8 +35,13 @@ struct ResultPage {
   @State l2: number = 0;
   @State mem: number = 0;
   @State heatPeak: number[] = [0, 0, 0];
+  // score-algorithm：最优路径对照（CPI 分母 + tier 选择对比）
+  @State optimalTau: number = 1;
+  @State optimalSteps: number = 0;
+  @State optimalViaTiers: number[] = [];
+  @State playerViaTiers: number[] = [];
   // Day 8：AI 评语；加载中显示占位文案，getAIComment resolve 后切到正文
-  @State aiComment: string = '正在分析走线...';
+  @State aiComment: string = '正在分析指令执行...';
   // 是否已保存到数据库（避免重复写入）
   private saved: boolean = false;
 
@@ -56,6 +59,19 @@ struct ResultPage {
     this.mem = p.mem;
     if (p.heatPeak !== undefined && p.heatPeak !== null && p.heatPeak.length > 0) {
       this.heatPeak = p.heatPeak;
+    }
+    // score-algorithm：最优对照（optimalTau 兜底 ≥1 防 CPI 除零）
+    if (p.optimalTau !== undefined && p.optimalTau !== null && p.optimalTau > 0) {
+      this.optimalTau = p.optimalTau;
+    }
+    if (p.optimalSteps !== undefined && p.optimalSteps !== null) {
+      this.optimalSteps = p.optimalSteps;
+    }
+    if (p.optimalViaTiers !== undefined && p.optimalViaTiers !== null) {
+      this.optimalViaTiers = p.optimalViaTiers;
+    }
+    if (p.playerViaTiers !== undefined && p.playerViaTiers !== null) {
+      this.playerViaTiers = p.playerViaTiers;
     }
     // Day 8：异步取 AI 评语（演示版 Promise.resolve 立即完成）
     this.loadAIComment();
@@ -108,18 +124,17 @@ struct ResultPage {
     }
   }
 
-  // τ 评级：S / A / B / C
+  // CPI = 玩家 τ / 理论最优 τ（1.0 = 完美）；optimalTau 已兜底 ≥1
+  private cpi(): number {
+    if (this.optimalTau <= 0) {
+      return this.tau;
+    }
+    return this.tau / this.optimalTau;
+  }
+
+  // CPI 评级：S ≤1.2 / A ≤2.0 / B ≤4.0 / C
   private rating(): string {
-    if (this.tau <= TAU_THRESHOLD_S) {
-      return 'S';
-    }
-    if (this.tau <= TAU_THRESHOLD_A) {
-      return 'A';
-    }
-    if (this.tau <= TAU_THRESHOLD_B) {
-      return 'B';
-    }
-    return 'C';
+    return cpiRating(this.cpi());
   }
 
   // 评级牌颜色：S 金 / A 青绿 / B 银 / C 暗红
@@ -137,11 +152,14 @@ struct ResultPage {
     return '#d63b3b';
   }
 
-  // "走线优化 X%"：(baseline - τ) / baseline × 100，下界 0
-  private optimizationPct(): number {
-    const v: number = (OPTIMIZATION_BASELINE - this.tau) / OPTIMIZATION_BASELINE * 100;
-    if (v < 0) {
+  // 流水线效率 = 最优 τ / 玩家 τ × 100，cap 100（玩家=最优 → 100%）
+  private pipelineEfficiency(): number {
+    if (this.tau <= 0) {
       return 0;
+    }
+    const v: number = this.optimalTau / this.tau * 100;
+    if (v > 100) {
+      return 100;
     }
     return Math.round(v * 10) / 10;
   }
@@ -157,44 +175,57 @@ struct ResultPage {
     return '#22d3a8';
   }
 
-  // 左侧：评级牌 + τ + 走线优化
+  // 左侧：CPI 评级牌 + 实际/最优 τ + 流水线效率
   @Builder
   RatingPanel() {
     Column() {
-      Text('通讯链路评估')
+      Text('指令执行报告')
         .fontSize(20)
         .fontColor('#88a0b8')
-        .margin({ bottom: 24 })
+        .margin({ bottom: 4 })
+      Text('LOAD R1, [addr] · 取指→译码→执行→访存→写回')
+        .fontSize(11)
+        .fontColor('#5a7088')
+        .margin({ bottom: 18 })
 
-      // 评级大字
+      // 评级大字 + 语义副标题
       Text(this.rating())
-        .fontSize(140)
+        .fontSize(132)
         .fontWeight(FontWeight.Bold)
         .fontColor(this.ratingColor())
-        .margin({ bottom: 8 })
+        .margin({ bottom: 2 })
+      Text(ratingTagline(this.rating()))
+        .fontSize(13)
+        .fontColor(this.ratingColor())
+        .margin({ bottom: 16 })
 
-      // τ 数值
-      Text('τ = ' + this.tau + ' cycles')
+      // CPI 核心指标（= 实际 τ / 理论最优 τ）
+      Text('CPI = ' + this.cpi().toFixed(2))
         .fontSize(28)
         .fontColor('#e8f4ff')
         .margin({ bottom: 4 })
-      Text('步数 ' + this.steps + '  +  VIA 延迟 ' + this.tauVia)
-        .fontSize(14)
+      Text('实际 τ ' + this.tau + '  ·  理论最优 ' + this.optimalTau + ' cycles')
+        .fontSize(13)
         .fontColor('#5a7088')
-        .margin({ bottom: 24 })
+        .margin({ bottom: 2 })
+      Text('步数 ' + this.steps + ' + 缓存延迟 ' + this.tauVia
+          + '   (最优步数 ' + this.optimalSteps + ')')
+        .fontSize(12)
+        .fontColor('#5a7088')
+        .margin({ bottom: 18 })
 
-      // 走线优化百分比
-      Text('走线优化  ' + this.optimizationPct() + ' %')
+      // 流水线效率（最优 / 实际）
+      Text('流水线效率  ' + this.pipelineEfficiency() + ' %')
         .fontSize(16)
         .fontColor('#22d3a8')
-        .margin({ bottom: 24 })
+        .margin({ bottom: 20 })
 
       // Day 8：芯片工程师评语卡片
       this.AICommentCard()
     }
     .width(360)
     .height('100%')
-    .padding({ left: 24, right: 24, top: 60 })
+    .padding({ left: 24, right: 24, top: 48 })
     .alignItems(HorizontalAlign.Center)
   }
 
@@ -222,25 +253,62 @@ struct ResultPage {
     .alignItems(HorizontalAlign.Start)
   }
 
-  // 右侧：VIA 使用 + 热量峰值
+  // tier 序列文案："L1$ → DRAM"；空序列显示 '—'
+  private tierSeqText(tiers: number[]): string {
+    if (tiers === undefined || tiers === null || tiers.length === 0) {
+      return '—';
+    }
+    let s: string = '';
+    for (let i = 0; i < tiers.length; i++) {
+      s += tierShort(tiers[i]);
+      if (i < tiers.length - 1) {
+        s += ' → ';
+      }
+    }
+    return s;
+  }
+
+  // 右侧：缓存命中分布 + 最优/实际选择对照 + 各层热量峰值
   @Builder
   StatsPanel() {
     Column() {
-      // VIA 使用分布
-      Text('── VIA 使用 ──')
+      // 缓存命中分布（VIA 三级）
+      Text('── 缓存命中分布 ──')
         .fontSize(14)
         .fontColor('#5a7088')
-        .margin({ top: 60, bottom: 16 })
+        .margin({ top: 48, bottom: 16 })
 
-      this.ViaRow('L1', this.l1, '#ffd24a', '黄金 · 延迟 1')
-      this.ViaRow('L2', this.l2, '#d6dde6', '银 · 延迟 3')
-      this.ViaRow('MEM', this.mem, '#c98b5b', '铜 · 延迟 6')
+      this.ViaRow('L1$', this.l1, '#ffd24a', 'HIT · 1 cycle')
+      this.ViaRow('L2$', this.l2, '#d6dde6', 'HIT · 3 cycles')
+      this.ViaRow('DRAM', this.mem, '#c98b5b', 'ACCESS · 6 cycles')
+
+      // 最优 vs 实际 缓存选择序列对照
+      Row() {
+        Text('最优建议')
+          .fontSize(12)
+          .fontColor('#5a7088')
+          .width(72)
+        Text(this.tierSeqText(this.optimalViaTiers))
+          .fontSize(13)
+          .fontColor('#22d3a8')
+      }
+      .margin({ top: 14 })
+      Row() {
+        Text('你的选择')
+          .fontSize(12)
+          .fontColor('#5a7088')
+          .width(72)
+        Text(this.tierSeqText(this.playerViaTiers))
+          .fontSize(13)
+          .fontColor('#ffd166')
+      }
+      .margin({ top: 6 })
 
       // 各层热量峰值
-      Text('── 热量峰值 ──')
+      Text('── 各层热量峰值 ──')
         .fontSize(14)
         .fontColor('#5a7088')
-        .margin({ top: 32, bottom: 16 })
+        .margin({ top: 28, bottom: 16 })
 
       ForEach(this.heatPeak, (peak: number, idx: number) => {
         this.HeatRow(idx, peak)
@@ -273,10 +341,10 @@ struct ResultPage {
   @Builder
   HeatRow(layer: number, peak: number) {
     Row() {
-      Text('Layer ' + layer)
-        .fontSize(14)
+      Text(layerName(layer))
+        .fontSize(12)
         .fontColor('#88a0b8')
-        .width(80)
+        .width(104)
       Progress({ value: peak, total: 100, type: ProgressType.Linear })
         .color(this.heatPeakColor(peak))
         .style({ strokeWidth: 8 })

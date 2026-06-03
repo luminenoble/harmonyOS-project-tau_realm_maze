@@ -9,6 +9,7 @@ import { drawFade, drawWarningOverlay, drawViaProgressBar, drawShutterFold } fro
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine, VictoryStats } from '../game/core/GameEngine';
 import { MusicPanel } from '../components/MusicPanel';
+import { layerName, tierShort } from '../game/data/Semantics';
 
 @Entry
 @Component
@@ -46,7 +47,8 @@ struct GamePage {
   @State tau: number = 0;
   @State totalPicked: number = 0;
   @State totalAll: number = 0;
-  // score-algorithm：当前落点是否可激活（VIA/EXIT）+ 交互类型提示（驱动 EXEC 按钮）
+  // score-algorithm：理论最优 τ（CPI 基准，全程不变）；当前落点交互态
+  @State optimalTau: number = 1;
   @State canInteract: boolean = false;
   @State interactHint: string = '';
 
@@ -78,6 +80,7 @@ struct GamePage {
     this.tau = this.engine.tau;
     this.totalPicked = this.engine.totalFragmentsPicked;
     this.totalAll = this.engine.totalFragmentsAll;
+    this.optimalTau = this.engine.optimalTau;
     this.canInteract = this.engine.canInteract;
     this.interactHint = this.engine.interactHint;
     this.engine.setTickCallback(() => {
@@ -124,7 +127,7 @@ struct GamePage {
       this.currentFragmentTotal = e.currentFragmentTotal;
       this.totalPicked = e.totalFragmentsPicked;
       AlertDialog.show({
-        title: '信号碎片 +1',
+        title: 'LOAD 操作数 +1',
         message: factText,
         autoCancel: true,
         confirm: {
@@ -253,15 +256,20 @@ struct GamePage {
     (this.engine as GameEngine).tryInteract();
   }
 
-  // EXEC 按钮文案：按落点类型区分（Day 9 语义重构后改 L1$/WB 等术语）
+  // EXEC 按钮文案：按落点类型映射到缓存命中 / 写回术语
   private interactLabel(): string {
     if (this.interactHint === 'EXIT') {
-      return '✓ 激活终点';
+      return '⏎ WB 写回';
     }
     if (this.interactHint.indexOf('VIA') === 0) {
-      return '⚡ 激活 VIA';
+      const tier: number = Number(this.interactHint.substring(3));
+      // DRAM 是"访问未命中"，L1$/L2$ 是"命中"
+      if (tier === 2) {
+        return '⚡ DRAM 访问';
+      }
+      return '⚡ ' + tierShort(tier) + ' 命中';
     }
-    return '· 激活 ·';
+    return '· EXEC ·';
   }
 
   // 热量阶梯色：≥80 红（过热）/ ≥50 黄（警示）/ 其余青绿（凉）
@@ -295,22 +303,26 @@ struct GamePage {
         .fontWeight(FontWeight.Bold)
         .fontColor('#22d3a8')
         .margin({ top: 36, bottom: 4 })
-      Text('韬略 · 芯片迷宫')
+      Text('韬略 · 指令流水线')
         .fontSize(12)
         .fontColor('#5a7088')
         .margin({ bottom: 32 })
 
-      // 当前层数
-      Text('当前层')
+      // 当前层（机器语义名 + Layer 序号）
+      Text('当前存储层级')
         .fontSize(12)
         .fontColor('#5a7088')
-      Text('Layer ' + this.currentLayer + ' / ' + (this.TARGET_LAYERS - 1))
-        .fontSize(20)
+      Text(layerName(this.currentLayer))
+        .fontSize(18)
         .fontColor('#22d3a8')
-        .margin({ top: 4, bottom: 24 })
+        .margin({ top: 4, bottom: 1 })
+      Text('Layer ' + this.currentLayer + ' / ' + (this.TARGET_LAYERS - 1))
+        .fontSize(11)
+        .fontColor('#5a7088')
+        .margin({ bottom: 24 })
 
-      // 当前层碎片计数
-      Text('信号碎片')
+      // 当前层操作数（LOAD）计数
+      Text('操作数 LOAD')
         .fontSize(12)
         .fontColor('#5a7088')
       Text('◆ ' + this.currentFragments + ' / ' + this.currentFragmentTotal)
@@ -333,8 +345,8 @@ struct GamePage {
         .fontColor(this.heatColor())
         .margin({ top: 4, bottom: 24 })
 
-      // 重构倒计时（每 20 步触发一次局部重构）
-      Text('下一次重构')
+      // 分支预测刷新倒计时（每 20 步触发一次动态重构 = BRANCH MISPRED）
+      Text('分支预测刷新')
         .fontSize(12)
         .fontColor('#5a7088')
       Text(this.stepsUntilRestructure + ' 步')
@@ -342,16 +354,16 @@ struct GamePage {
         .fontColor('#ff9a40')
         .margin({ top: 4, bottom: 24 })
 
-      // Day 7：τ 仪表 + 跨层碎片总数（终点解锁条件）
-      Text('τ 时延累计')
+      // τ 仪表：实际 / 理论最优（CPI = 实际/最优，结算时评级）
+      Text('τ / 理论最优')
         .fontSize(12)
         .fontColor('#5a7088')
-      Text(this.tau + ' cyc')
-        .fontSize(20)
+      Text(this.tau + ' / ' + this.optimalTau + ' cyc')
+        .fontSize(18)
         .fontColor('#22d3a8')
         .margin({ top: 4, bottom: 24 })
 
-      Text('总碎片')
+      Text('总操作数')
         .fontSize(12)
         .fontColor('#5a7088')
       Text(this.totalPicked + ' / ' + this.totalAll)

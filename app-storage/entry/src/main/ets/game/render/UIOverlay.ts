@@ -133,7 +133,8 @@ const COLOR_VIA_BAR_BORDER: string = '#22d3a8';
 const COLOR_VIA_BAR_TRACK: string = '#1a2238';
 const COLOR_VIA_BAR_TEXT: string = '#e8f4ff';
 const VIA_BAR_TIER_COLORS: string[] = ['#ffd24a', '#d6dde6', '#c98b5b'];
-const VIA_BAR_TIER_LABELS: string[] = ['L1-VIA', 'L2-VIA', 'MEM-VIA'];
+// score-algorithm：缓存命中语义术语（L1$ HIT / L2$ HIT / DRAM ACCESS）
+const VIA_BAR_TIER_LABELS: string[] = ['L1$ HIT', 'L2$ HIT', 'DRAM ACCESS'];
 const VIA_BAR_TIER_DELAYS: number[] = [1, 3, 6];
 
 export function drawViaProgressBar(
@@ -213,7 +214,8 @@ export function drawWarningOverlay(
   ctx.font = '24px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('信号重路由中...', w / 2, h / 2);
+  // score-algorithm：动态重构 = 分支预测失败，流水线被冲刷重新调度
+  ctx.fillText('BRANCH MISPREDICT · 流水线冲刷', w / 2, h / 2);
 
   // 3) 防 HarmonyOS Canvas 状态泄漏：显式还原
   ctx.textAlign = 'left';
