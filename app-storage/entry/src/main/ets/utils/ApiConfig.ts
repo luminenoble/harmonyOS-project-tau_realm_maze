@@ -1,12 +1,12 @@
 // DeepSeek API 配置
-// 用法：把 DEEPSEEK_API_KEY 填成你的私钥即可启用真实 AI 评语；留空则自动降级为占位实现
+// 用法：DEEPSEEK_API_KEY 非空即启用真实 AI（关卡指令生成 + 结算评语）；留空自动降级
 // 获取 key：https://platform.deepseek.com/ → API Keys
 //
-// ⚠️ 安全：演示 / 提交仓库时请保持 KEY 为空串，切勿把私钥提交进 Git。
-//    key 不入库、不打印日志；仅在结算页内存中用于一次 HTTPS 请求。
+// ⚠️ 本项目为课程演示，按设计要求本地明文配置该 Key；如需复用请替换为自己的私钥。
+//    key 仅在内存中用于 HTTPS 请求，不打印日志。
 
-// 你的 DeepSeek API Key（本地填入，提交保持空）
-export const DEEPSEEK_API_KEY: string = '';
+// DeepSeek API Key（课程演示用，明文配置）
+export const DEEPSEEK_API_KEY: string = 'sk-15a46c3e165744c68ebc9d6c4be724d3';
 
 // Chat Completions 接口（OpenAI 兼容）
 export const DEEPSEEK_ENDPOINT: string = 'https://api.deepseek.com/chat/completions';
