@@ -162,4 +162,12 @@ S ≤ 1.2 / A ≤ 2.0 / B ≤ 4.0 / C > 4.0
 
 ## 七、实现记录
 
-- 2026-06-03：建分支 `feat/instr-redesign`，移入 `new-design.md`，落地本计划。后续按阶段追加。
+- 2026-06-03：建分支 `feat/instr-redesign`，移入 `new-design.md`，落地本计划。
+- 2026-06-03：**阶段 1（基础数据）** — `Instruction.ts`（模型/枚举/难度配置/分类工具）、`InstructionGraph.ts`（JSON 解析 + ProgramPlan）、`DeepSeekService.ts`（生成 + 离线向量内积 fallback）、`ProgramStore.ts`（跨页共享）、`ApiConfig.ts`（演示 Key）。
+- 2026-06-03：**阶段 2（地图/散热）** — `HeatManager`（60/90 + 三层速率 [2,1.5,1]）、`TileType`（RAW_HAZARD + 指令语义元数据）、`MazeGenerator.placeRawHazards`、`MapManager`（接 ProgramPlan + 难度碎片数 + 标注语义）。
+- 2026-06-03：**阶段 3（核心玩法）** — `Player.heldOperands`、`GateLogic` 改持有操作数判定、`GameEngine` 指令执行状态机（LOAD 装载 / ALU 执行生成结果寄存器 / RAW 失效）+ CPI=(步数+延迟)/指令数 + hazard 回调。
+- 2026-06-03：**阶段 4（渲染）** — `TileSet` 操作数三皮肤 + ALU 算子文本 + VIA CALL/RET + RAW 危险块；`drawTile` 分派传元数据。
+- 2026-06-03：**阶段 5（UI/页面）** — `DifficultyPage` / `LoadingPage` / `HoldingBar` / `InfoPanel` / `InstructionDrawer`；`GamePage` 19×19 + ProgramStore 接入 + 点击命中信息卡 + CPI 侧栏；`ResultPage` CPI 新公式；`DbHelper.instr_type`；`AIComment` 接指令上下文；`Index`→难度页；`main_pages` 注册。
+- 2026-06-03：**修复** — 上行 VIA 解锁阈值改为本层碎片总数（修 Easy/Hard 难度软锁）。
+
+> 说明：WSL 无法编译 ArkTS，已用 `tsc --noEmit` 对纯 TS 文件做语法预检（无 TS1xxx 语法错误）；`.ets`（ArkUI 装饰器）需在 DevEco Studio Build 验证，报错回传后迭代修复。

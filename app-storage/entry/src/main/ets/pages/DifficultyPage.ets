@@ -3,6 +3,11 @@
 import { router } from '@kit.ArkUI';
 import { Difficulty, DIFFICULTY_CONFIGS, DifficultyConfig } from '../game/data/Instruction';
 
+// 跳转 LoadingPage 携带的参数
+interface StartParams {
+  difficulty: number;
+}
+
 @Entry
 @Component
 struct DifficultyPage {
@@ -19,9 +24,10 @@ struct DifficultyPage {
 
   // 跳加载页，传难度
   private start(d: Difficulty): void {
+    const params: StartParams = { difficulty: d as number };
     router.pushUrl({
       url: 'pages/LoadingPage',
-      params: { difficulty: d as number }
+      params: params
     });
   }
 
