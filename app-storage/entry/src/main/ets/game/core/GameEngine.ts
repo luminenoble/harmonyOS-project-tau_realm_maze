@@ -12,6 +12,7 @@ import { Restructurer, RestructureResult } from './Restructurer';
 import { HeatManager } from './HeatManager';
 import { Rng } from '../../utils/MazeGenerator';
 import { PathOptimizer, OptimalResult } from './PathOptimizer';
+import { InstructionProgram, FragmentKind, aluOpName, fragmentKindName } from '../data/Instruction';
 
 // tick 回调类型
 export type TickCallback = () => void;
@@ -21,6 +22,8 @@ export type FragmentPickedCallback = (factText: string) => void;
 export type ExitHintCallback = (hint: string) => void;
 // 通关回调：传入结算统计
 export type VictoryCallback = (stats: VictoryStats) => void;
+// RAW 数据冒险触发回调：传入失效提示文案
+export type HazardCallback = (hint: string) => void;
 
 // 通关结算数据；ResultPage 通过 router params 解析展示
 // score-algorithm：新增最优路径对照字段，CPI = tau / optimalTau，AI 评语据差值生成
@@ -38,11 +41,17 @@ export class VictoryStats {
   optimalViaTiers: number[];  // 最优各层上行应选 tier（0/1/2）
   playerViaTiers: number[];   // 玩家各层上行实际选用 tier（按时序）
 
+  // 指令重构新增：CPI = (steps + tauVia) / totalInstr
+  totalInstr: number;     // 本局总指令数（CPI 分母）
+  instrType: string;      // 运算场景描述（如 "1×2 向量内积"）
+  hazards: number;        // RAW 数据冒险触发次数
+
   constructor(
     steps: number, tauVia: number, tau: number,
     l1: number, l2: number, mem: number, heatPeak: number[],
     optimalTau: number, optimalSteps: number, optimalDelay: number,
-    optimalViaTiers: number[], playerViaTiers: number[]
+    optimalViaTiers: number[], playerViaTiers: number[],
+    totalInstr: number, instrType: string, hazards: number
   ) {
     this.steps = steps;
     this.tauVia = tauVia;
@@ -56,6 +65,9 @@ export class VictoryStats {
     this.optimalDelay = optimalDelay;
     this.optimalViaTiers = optimalViaTiers;
     this.playerViaTiers = playerViaTiers;
+    this.totalInstr = totalInstr;
+    this.instrType = instrType;
+    this.hazards = hazards;
   }
 }
 
@@ -139,14 +151,22 @@ export class GameEngine {
   // 仅在 isTransitioning() 期间有意义；进入 TRANSITION_OUT 时 set，进 IDLE 时 reset
   private _isViaTransition: boolean;
 
+  // 指令重构：本局总指令数 / 场景 / ALU 通过数 / RAW 触发数
+  private _totalInstr: number;
+  private _instrType: string;
+  private _aluPassed: number;
+  private _hazards: number;
+
   private intervalId: number = -1;
   private onTick: TickCallback;
   private onFragmentPicked: FragmentPickedCallback;
   private onExitHint: ExitHintCallback;
   private onVictory: VictoryCallback;
+  private onHazard: HazardCallback;
   private readonly TICK_MS: number = 16;
 
-  constructor(map: MapManager, startCol: number = 1, startRow: number = 1) {
+  // program：本局指令序列（null 则用碎片总数兜底 totalInstr）
+  constructor(map: MapManager, program: InstructionProgram | null = null, startCol: number = 1, startRow: number = 1) {
     this.map = map;
     this.player = new Player(startCol, startRow);
     this._currentLayer = 0;
@@ -160,8 +180,11 @@ export class GameEngine {
     this.onFragmentPicked = () => {};
     this.onExitHint = () => {};
     this.onVictory = () => {};
+    this.onHazard = () => {};
     this._pickedCount = 0;
     this._stepCount = 0;
+    this._aluPassed = 0;
+    this._hazards = 0;
     this._lastOpened = [];
     this._lastClosed = [];
     // 用启动时间 + 起点扰动作 seed，避免每次重生 RNG 序列一致
@@ -198,6 +221,19 @@ export class GameEngine {
       this._fragments.push(0);
       this._fragmentTotals.push(total);
     }
+
+    // 指令重构：总指令数取程序长度；无程序时退化为碎片总数（CPI 分母）
+    if (program !== null && program.instructions.length > 0) {
+      this._totalInstr = program.instructions.length;
+      this._instrType = program.instrType;
+    } else {
+      let allFrag: number = 0;
+      for (let i = 0; i < this._fragmentTotals.length; i++) {
+        allFrag += this._fragmentTotals[i];
+      }
+      this._totalInstr = allFrag > 0 ? allFrag : 1;
+      this._instrType = '机器指令执行';
+    }
   }
 
   setTickCallback(cb: TickCallback): void {
@@ -214,6 +250,44 @@ export class GameEngine {
 
   setVictoryCallback(cb: VictoryCallback): void {
     this.onVictory = cb;
+  }
+
+  setHazardCallback(cb: HazardCallback): void {
+    this.onHazard = cb;
+  }
+
+  // 指令重构：CPI = (步数 + VIA延迟) / 总指令数（new-design 第七节）
+  get cpi(): number {
+    if (this._totalInstr <= 0) {
+      return this._stepCount + this._tauVia;
+    }
+    return (this._stepCount + this._tauVia) / this._totalInstr;
+  }
+
+  get totalInstr(): number {
+    return this._totalInstr;
+  }
+
+  get instrType(): string {
+    return this._instrType;
+  }
+
+  get hazards(): number {
+    return this._hazards;
+  }
+
+  // 已执行指令数（LOAD 拾取 + ALU 通过）；EXIT 写回在通关时另算
+  get executedCount(): number {
+    return this.totalFragmentsPicked + this._aluPassed;
+  }
+
+  // 当前持有操作数标签列表（HUD 持有条用）
+  get heldLabels(): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < this.player.heldOperands.length; i++) {
+      out.push(this.player.heldOperands[i].label);
+    }
+    return out;
   }
 
   // 暴露给渲染层
@@ -379,7 +453,8 @@ export class GameEngine {
     if (tile.type === TileType.WALL) {
       return false;
     }
-    if (!GateLogic.canPass(tile, this._fragments[this._currentLayer])) {
+    // ALU 门：持有操作数 ≥ 阈值才能"执行"通过
+    if (!GateLogic.canPass(tile, this.player.heldOperands.length)) {
       return false;
     }
     // Day 6 散热：升温先于移动，过热即时减速；底层 ×2 倍率在 HeatManager 内部处理
@@ -572,16 +647,59 @@ export class GameEngine {
       return;
     }
 
-    // 1) 碎片拾取
+    // 1) 碎片拾取 = 执行一条 LOAD/MOV：把操作数装入持有列表
     if (tile.type === TileType.FRAGMENT) {
+      const label: string = tile.operandLabel.length > 0 ? tile.operandLabel : '操作数';
+      const kind: number = tile.fragKind >= 0 ? tile.fragKind : FragmentKind.REGISTER;
+      this.player.addOperand(label, kind);
       tile.type = TileType.FLOOR;
       tile.locked = false;
+      tile.fragKind = -1;
+      tile.operandLabel = '';
       this._fragments[this._currentLayer]++;
       this._pickedCount++;
       const count: number = this._fragments[this._currentLayer];
-      GateLogic.unlockAllInLayer(this.map, this._currentLayer, count);
+      // ALU 门按持有操作数解锁；上行 VIA 仍按本层碎片全收集解锁
+      GateLogic.unlockAllInLayer(this.map, this._currentLayer, this.player.heldOperands.length);
       ViaUnlock.unlockAllInLayer(this.map, this._currentLayer, count);
-      this.onFragmentPicked(pickFact(this._pickedCount - 1));
+      this.onFragmentPicked(this.loadFactText(label, kind));
+      this.phase = EnginePhase.IDLE;
+      if (this.maybeForcePop()) {
+        return;
+      }
+      this.maybeStartRestructure();
+      return;
+    }
+
+    // 1.5) ALU 门通过 = 执行一条运算指令：累计 + 生成结果寄存器 + 门化为通路
+    if (tile.type === TileType.GATE && tile.aluOp >= 0) {
+      this._aluPassed++;
+      // 结果寄存器入持有（替换被消耗的源，简化为净增一项，避免软锁）
+      this.player.addOperand('r' + tile.instrIndex, FragmentKind.REGISTER);
+      const opName: string = aluOpName(tile.aluOp);
+      const src: string = tile.aluOperands.length > 0 ? tile.aluOperands : '源操作数';
+      tile.type = TileType.FLOOR;
+      tile.locked = false;
+      tile.aluOp = -1;
+      this.onFragmentPicked('ALU ' + opName + ' 执行：' + src + ' → r' + tile.instrIndex + '（结果寄存器已生成）');
+      this.phase = EnginePhase.IDLE;
+      if (this.maybeForcePop()) {
+        return;
+      }
+      this.maybeStartRestructure();
+      return;
+    }
+
+    // 1.6) RAW 数据冒险：失效一个持有寄存器（模拟读后写气泡），单次烧毁
+    if (tile.type === TileType.RAW_HAZARD) {
+      const lost: string = this.player.invalidateOneOperand();
+      this._hazards++;
+      tile.type = TileType.FLOOR;
+      tile.locked = false;
+      const msg: string = lost.length > 0
+        ? 'RAW 数据冒险：寄存器 ' + lost + ' 值失效，需重新 LOAD。'
+        : 'RAW 数据冒险：流水线气泡，无持有寄存器受影响。';
+      this.onHazard(msg);
       this.phase = EnginePhase.IDLE;
       if (this.maybeForcePop()) {
         return;
@@ -614,6 +732,12 @@ export class GameEngine {
     this.maybeStartRestructure();
   }
 
+  // LOAD 操作数提示文案：操作数标签 + 皮肤类型 + 一条芯片科普
+  private loadFactText(label: string, kind: number): string {
+    return 'LOAD ' + label + '（' + fragmentKindName(kind) + '）装入寄存器文件。\n'
+      + pickFact(this._pickedCount - 1);
+  }
+
   // Day 7：触发通关；幂等，只回调一次
   private fireVictory(): void {
     if (this._victoryFired) {
@@ -639,7 +763,8 @@ export class GameEngine {
       this._stepCount, this._tauVia, this.tau,
       this._viaCounts[0], this._viaCounts[1], this._viaCounts[2], peakCopy,
       this._optimal.optimalTau, this._optimal.optimalSteps, this._optimal.optimalDelay,
-      optTiersCopy, playerTiersCopy
+      optTiersCopy, playerTiersCopy,
+      this._totalInstr, this._instrType, this._hazards
     );
     this.phase = EnginePhase.IDLE;
     // 停 loop，等待 GamePage 路由跳转

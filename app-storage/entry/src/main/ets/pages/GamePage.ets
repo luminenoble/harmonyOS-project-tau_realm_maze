@@ -70,7 +70,7 @@ struct GamePage {
       this.engine.stop();
     }
     const map: MapManager = new MapManager(this.GRID_COLS, this.GRID_ROWS, this.TARGET_LAYERS);
-    this.engine = new GameEngine(map, 1, 1);
+    this.engine = new GameEngine(map, null, 1, 1);
     this.currentLayer = 0;
     this.currentFragments = this.engine.currentFragments;
     this.currentFragmentTotal = this.engine.currentFragmentTotal;

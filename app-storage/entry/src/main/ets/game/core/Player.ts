@@ -1,11 +1,54 @@
 // 玩家状态模型：离散网格坐标 + 视觉补间
 // Day 3 不引入朝向 / 状态机，保持纯数据，便于 GameEngine 驱动
-// Day 8 新增：身后 3 格残影（trail）用于视觉润色
+// Day 8 新增：身后 3 格残影（trail）；指令重构新增：持有操作数列表（控制信号寄存器现态）
 
 // 残影队列长度（玩家身后保留的格数）
 const TRAIL_LEN: number = 3;
 
+// 持有的操作数（= 已 LOAD 进寄存器文件的值）
+export interface HeldOperand {
+  label: string;   // "eax" / "#5" / "[addr_A0]"
+  kind: number;    // FragmentKind
+}
+
 export class Player {
+  // 持有操作数列表（控制信号当前掌握的寄存器值）；跨层持续（寄存器文件全局）
+  // 拾取碎片 → push；踩 RAW 冒险 → 失效一个；ALU 门通过 → push 结果寄存器
+  heldOperands: HeldOperand[] = [];
+
+  // 拾取一个操作数
+  addOperand(label: string, kind: number): void {
+    this.heldOperands.push({ label: label, kind: kind });
+  }
+
+  // 是否持有指定标签的操作数
+  hasOperand(label: string): boolean {
+    for (let i = 0; i < this.heldOperands.length; i++) {
+      if (this.heldOperands[i].label === label) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // RAW 冒险：失效一个持有操作数（优先寄存器类，否则末位）；返回失效的标签（无则 ''）
+  invalidateOneOperand(): string {
+    if (this.heldOperands.length === 0) {
+      return '';
+    }
+    // 优先剔除寄存器类（kind===0），更贴近"寄存器值被覆盖"语义
+    for (let i = this.heldOperands.length - 1; i >= 0; i--) {
+      if (this.heldOperands[i].kind === 0) {
+        const lbl: string = this.heldOperands[i].label;
+        this.heldOperands.splice(i, 1);
+        return lbl;
+      }
+    }
+    const last: HeldOperand = this.heldOperands[this.heldOperands.length - 1];
+    this.heldOperands.pop();
+    return last.label;
+  }
+
   // 当前逻辑坐标（移动结束后停留的格）
   col: number;
   row: number;
