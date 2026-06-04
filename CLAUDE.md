@@ -57,7 +57,7 @@ GitHub: `https://github.com/luminenoble/harmonyOS-project-tau_realm_maze.git`（
 
 | 角色 | 工具 | 职责 |
 |------|------|------|
-| Claude Code（WSL） | `/mnt/d/wsl-share/harmony-game/` | 编写/修改 ArkTS 源码、生成算法文件、读写项目文件 |
+| Claude Code（WSL） | `/mnt/d/wsl-share/harmony-game/` | 编写/修改 ArkTS 源码、生成算法文件、读写项目文件,英文思考,中文回答 |
 | 开发者（Windows） | DevEco Studio | 编译、真机调试、模拟器运行、打包 .hap |
 
 ### WSL 访问工程文件
