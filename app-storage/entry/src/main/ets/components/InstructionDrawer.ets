@@ -17,7 +17,7 @@ export struct InstructionDrawer {
   // 关闭回调
   onClose: () => void = () => {};
 
-  // 一条指令的颜色：已执行绿 / 当前黄 / 未来灰
+  // 一条指令的颜色：已执行绿 / 当前黄 / 未来灰（在不透明深底上保证可读对比）
   private lineColor(seq: number): string {
     if (seq <= this.executedCount) {
       return '#22d3a8';
@@ -25,7 +25,7 @@ export struct InstructionDrawer {
     if (seq === this.executedCount + 1) {
       return '#ffd166';
     }
-    return '#5a7088';
+    return '#9fb1c6';   // 未执行：提亮的灰蓝（原 #5a7088 在深底上偏暗、易糊）
   }
 
   build() {
@@ -97,8 +97,11 @@ export struct InstructionDrawer {
     .width(300)
     .height('100%')
     .padding(16)
-    .backgroundColor('#0d1424f7')
-    .border({ width: 1, color: '#22d3a833' })
+    // 不透明深底：ArkUI 8 位色为 #AARRGGBB（alpha 在前），原 '#0d1424f7' 实为 alpha=0x0d≈5% 几近全透明，
+    // 导致地图透出糊住指令文字。改用 6 位纯色 = 完全不透明，彻底解决遮挡
+    .backgroundColor('#0b1220')
+    // 左侧实色描边，让抽屉边缘在地图上清晰可辨
+    .border({ width: 1, color: '#22d3a8' })
     .alignItems(HorizontalAlign.Start)
   }
 }
