@@ -4,7 +4,7 @@
 
 import {
   Instruction, InstructionProgram, FragmentKind,
-  classifyOperand, aluOpFromMnemonic, isLoadMnemonic, isStoreMnemonic
+  classifyOperand, aluOpFromMnemonic, isLoadMnemonic
 } from '../game/data/Instruction';
 
 // 一个操作数碎片规格（贴到 FRAGMENT 瓦片）
