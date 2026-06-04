@@ -42,12 +42,12 @@ DevEco 真机：在 Layer 1/2 持续移动直到热量条变红，确认仅在**
 
 | 画布 | 内容 | 重画时机 |
 |------|------|----------|
-| 底层 `staticCtx` | 背景 + 地板 + 特殊瓦片 + 墙（`drawMapStatic`） | **仅** `mapVersion` / 层号 / 画布尺寸变化时 |
-| 顶层 `ctx`（透明） | 残影 + 玩家 + 重构脉冲 / 警告 / VIA 进度条 / 转场（`drawPlayerLayer` + overlay） | 每帧 |
+| 底层 `staticCtx` | 背景 + 地板 + 特殊瓦片（`drawMapStatic`） | **仅** `mapVersion` / 层号 / 画布尺寸变化时 |
+| 顶层 `ctx`（透明） | 残影 + （墙块 + 玩家）painter's 同排 + 重构脉冲 / 警告 / VIA 进度条 / 转场（`drawDynamicLayer` + overlay） | 每帧 |
 
 - `GameEngine` 新增 `mapVersion`：碎片拾取 / ALU 通过 / RAW / 散热 / 重构开墙 / 切层时自增；渲染层据此判定静态层是否需重画（`renderFrame` 命中缓存则跳过整张地图重绘）。
-- `IsoRenderer` 新增 `drawMapStatic`（地板+特殊+墙，墙间 painter's 排序）与 `drawPlayerLayer`（残影+玩家）。
-- **取舍**：墙块整体位于静态层之下，玩家恒画在顶层 → 不再被前方墙体遮挡。短墙（`wallH≈0.45×halfW`）等距下遮挡轻微，换来每帧绘制量从"360 格全画"降到"清屏 + 玩家 + 少量 overlay"。
+- `IsoRenderer` 新增 `drawMapStatic`（地板 + 特殊瓦片，**不含墙块**）与 `drawDynamicLayer`（残影 + 墙块/玩家 painter's 同排）。
+- **遮挡修正（2026-06-04）**：初版把墙也放静态层 → 玩家恒画顶层、不被墙遮挡。现将**墙块移回动态层并与玩家同排 painter's 排序**，恢复"前方墙遮挡玩家、后方墙不遮挡"的正确效果。墙每帧重画（约半数 cell），但最贵的地板 361 格 + 文字标签仍缓存在静态层，整体仍大幅省。
 - 回退：本方案为分层缓存；若需真正的 `OffscreenCanvas`，需把 TileSet/IsoRenderer 的 ctx 形参统一到 `CanvasRenderer` 基类（改动面大）。当前实现等价收益且类型安全，回退用 `git revert` 即可。
 
 ### 调试埋点（排查用）

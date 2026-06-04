@@ -4,7 +4,7 @@
 // 指令重构：从 ProgramStore 读取本局指令序列构建地图；CPI=(步数+延迟)/指令数
 import { router } from '@kit.ArkUI';
 import { IsoConfig, screenToGrid, GridPoint } from '../utils/IsoMath';
-import { drawMapStatic, drawPlayerLayer, drawRestructurePulse, drawInteractHighlight } from '../game/render/IsoRenderer';
+import { drawMapStatic, drawDynamicLayer, drawRestructurePulse, drawInteractHighlight } from '../game/render/IsoRenderer';
 import { drawFade, drawWarningOverlay, drawViaProgressBar, drawShutterFold } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine, VictoryStats } from '../game/core/GameEngine';
@@ -349,7 +349,8 @@ struct GamePage {
     this.ctx.globalAlpha = 1;
     this.ctx.clearRect(0, 0, w, h);  // 透明背景：不铺底色，露出下层静态画布
 
-    drawPlayerLayer(this.ctx, cfg, e.currentLayer, e.player, wallH * 0.6);
+    // 墙块 + 玩家同排 painter's，恢复墙体对玩家的前后遮挡
+    drawDynamicLayer(this.ctx, e.map, cfg, wallH, e.currentLayer, e.player, wallH * 0.6);
     drawRestructurePulse(
       this.ctx, cfg, e.currentLayer,
       e.lastOpenedCells, e.lastClosedCells, e.pulseAlpha, wallH
