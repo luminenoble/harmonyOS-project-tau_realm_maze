@@ -1,27 +1,37 @@
 // 瓦片类型与瓦片数据定义
-// Day 4 起 Tile 携带 viaTarget 字段；Day 7 增加 viaTier 标识 VIA 三级缓存分级
+// Day 4 起携带 viaTarget；Day 7 增 viaTier；指令重构起 FRAGMENT/GATE 叠加指令语义元数据 + 新增 RAW_HAZARD
 
 // 瓦片类型枚举
 export enum TileType {
   FLOOR = 0,        // 可行走地板
   WALL = 1,         // 阻挡墙体
-  VIA = 2,          // 层间通孔（Day 7 起分 L1/L2/MEM 三级）
-  GATE = 3,         // 逻辑门障碍（Day 5 启用）
-  FRAGMENT = 4,     // 信号碎片道具（Day 5 启用）
-  THERMAL_VIA = 5,  // 散热通道（Day 6 启用），踩踏本层热量 -30，永久可用
-  EXIT = 6          // 终点（Day 7 启用），顶层放 1 个，集齐全部碎片后到达即通关
+  VIA = 2,          // 层间通孔（分 L1/L2/MEM 三级；交互显示 CALL/RET）
+  GATE = 3,         // 逻辑门 / ALU 运算门（指令重构后承载 ALU 算子）
+  FRAGMENT = 4,     // 信号碎片 = 操作数（寄存器/立即数/地址三类皮肤）
+  THERMAL_VIA = 5,  // 散热通道，踩踏本层热量 -30（PIPELINE FLUSH）
+  EXIT = 6,         // 终点 = STORE/WB 写回，顶层 1 个
+  RAW_HAZARD = 7    // 数据冒险格（RAW）：踩上失效一个持有寄存器操作数
 }
 
 // 单个瓦片数据
-// viaTarget 仅 VIA 类型使用，记录踩上去要传送到的层号
-// 用 -1 哨兵值避免可选字段 ?: 在 ArkTS 严格模式下的不确定性
-// locked Day 5 起：GATE 默认 true（需碎片解锁）；上行 VIA 默认 true、下行 VIA 默认 false
-// viaTier Day 7 起：0=L1 / 1=L2 / 2=MEM；非 VIA 一律 -1
+// viaTarget 仅 VIA 使用（-1 哨兵）；viaTier：0=L1 / 1=L2 / 2=MEM，非 VIA 为 -1
+// locked：GATE / 上行 VIA 默认 true
+// 指令语义元数据（默认空 / -1，由 MapManager 在放置后标注）：
+//   - fragKind / operandLabel：FRAGMENT 承载的操作数皮肤与标签（如 REGISTER + "eax"）
+//   - aluOp / aluOperands：GATE 承载的 ALU 算子与源操作数（如 MUL + "ecx, edx"）
+//   - instrIndex：来源指令序号（信息面板展示）
 export class Tile {
   type: TileType;
   viaTarget: number;
   locked: boolean;
   viaTier: number;
+
+  // 指令语义元数据
+  fragKind: number = -1;        // FragmentKind，-1 表示非操作数碎片
+  operandLabel: string = '';    // 操作数标签
+  aluOp: number = -1;           // AluOp，-1 表示非 ALU 门
+  aluOperands: string = '';     // ALU 源操作数文本
+  instrIndex: number = -1;      // 来源指令序号
 
   constructor(type: TileType, viaTarget: number = -1, locked: boolean = false, viaTier: number = -1) {
     this.type = type;

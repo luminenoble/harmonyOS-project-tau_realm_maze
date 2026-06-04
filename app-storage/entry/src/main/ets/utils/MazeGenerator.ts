@@ -460,6 +460,40 @@ export class MazeGenerator {
     }
   }
 
+  // 指令重构：在每层放置 RAW 数据冒险格（new-design 3.3）— 调用顺序在 placeThermalVias 之后
+  // 候选：剩余 FLOOR cell（排除外圈 / 起点 / 已占用特殊瓦片）
+  // 不做 BFS 校验：RAW 可绕开，落到不可达区只是"少了个陷阱"
+  static placeRawHazards(layers: Tile[][][], rng: Rng, perLayer: number): void {
+    const layerCount: number = layers.length;
+    if (layerCount === 0) {
+      return;
+    }
+    const rows: number = layers[0].length;
+    const cols: number = layers[0][0].length;
+
+    for (let L = 0; L < layerCount; L++) {
+      const candidates: number[][] = [];
+      for (let r = 1; r < rows - 1; r++) {
+        for (let c = 1; c < cols - 1; c++) {
+          if (c === 1 && r === 1) {
+            continue;
+          }
+          if (layers[L][r][c].type === TileType.FLOOR) {
+            candidates.push([c, r]);
+          }
+        }
+      }
+      MazeGenerator.shuffleInPlace(candidates, rng);
+
+      const k: number = Math.min(perLayer, candidates.length);
+      for (let i = 0; i < k; i++) {
+        const c: number = candidates[i][0];
+        const r: number = candidates[i][1];
+        layers[L][r][c] = new Tile(TileType.RAW_HAZARD);
+      }
+    }
+  }
+
   // 通用洗牌（Fisher-Yates 原地）
   private static shuffleInPlace(arr: number[][], rng: Rng): void {
     for (let i = arr.length - 1; i > 0; i--) {

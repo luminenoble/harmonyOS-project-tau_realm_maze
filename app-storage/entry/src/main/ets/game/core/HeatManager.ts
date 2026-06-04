@@ -1,14 +1,16 @@
-// 散热管理：每层独立热量值（0..100），底层积热 ×2，过热减速 / 强制弹层
+// 散热管理：每层独立热量值（0..100），三层独立积热速率，过热减速 / 强制弹层
 // 映射韬定律下三维堆叠芯片的核心痛点：纵向叠层后底层散热困难
+// new-design 8.2：阈值下调 60/90 适配 19×19 更大地图；三层速率 [2, 1.5, 1]（4:3:2 耐久比）
 
 export class HeatManager {
   // 上限 / 阈值（公开静态供 GameEngine 与 UI 共享判断逻辑）
   static readonly MAX: number = 100;
-  static readonly OVERHEAT_THRESHOLD: number = 80;    // 减速触发线
-  static readonly FORCE_POP_THRESHOLD: number = 100;  // 强制弹层触发线
-  static readonly HEAT_PER_STEP_BASE: number = 1;     // 中层每步 +1
-  static readonly BOTTOM_LAYER_MULT: number = 2;      // 底层（Layer 0）×2 = +4
+  static readonly OVERHEAT_THRESHOLD: number = 60;    // 减速触发线（原 80 → 60）
+  static readonly FORCE_POP_THRESHOLD: number = 90;   // 强制弹层触发线（原 100 → 90）
   static readonly COOL_AMOUNT: number = 30;           // THERMAL_VIA 单次降温
+  // 三层独立积热速率（new-design 8.2）：Layer 0 最快 → 最先过热
+  // 下标对齐层号；越界层（理论不存在）退化为顶层速率 1
+  static readonly HEAT_RATES: number[] = [2, 1.5, 1];
 
   readonly layerCount: number;
   // 各层独立热量；构造时全部 0
@@ -22,14 +24,20 @@ export class HeatManager {
     }
   }
 
-  // 玩家在 layer 走一步：按层级倍率升温，cap 在 MAX
-  // 底层（Layer 0）倍率 ×2，其他层 ×1
+  // 该层每步积热速率；越界退化为 1
+  static rateOf(layer: number): number {
+    if (layer < 0 || layer >= HeatManager.HEAT_RATES.length) {
+      return 1;
+    }
+    return HeatManager.HEAT_RATES[layer];
+  }
+
+  // 玩家在 layer 走一步：按该层速率升温，cap 在 MAX
   tickStep(layer: number): void {
     if (layer < 0 || layer >= this.layerCount) {
       return;
     }
-    const mult: number = (layer === 0) ? HeatManager.BOTTOM_LAYER_MULT : 1;
-    const next: number = this.heats[layer] + HeatManager.HEAT_PER_STEP_BASE * mult;
+    const next: number = this.heats[layer] + HeatManager.rateOf(layer);
     this.heats[layer] = next > HeatManager.MAX ? HeatManager.MAX : next;
   }
 
