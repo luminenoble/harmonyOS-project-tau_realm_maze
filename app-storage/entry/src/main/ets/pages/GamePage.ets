@@ -4,7 +4,7 @@
 // 指令重构：从 ProgramStore 读取本局指令序列构建地图；CPI=(步数+延迟)/指令数
 import { router } from '@kit.ArkUI';
 import { IsoConfig, screenToGrid, GridPoint } from '../utils/IsoMath';
-import { drawMap, drawRestructurePulse, drawInteractHighlight } from '../game/render/IsoRenderer';
+import { drawMapStatic, drawPlayerLayer, drawRestructurePulse, drawInteractHighlight } from '../game/render/IsoRenderer';
 import { drawFade, drawWarningOverlay, drawViaProgressBar, drawShutterFold } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine, VictoryStats } from '../game/core/GameEngine';
@@ -25,7 +25,25 @@ import { Tile, TileType } from '../game/types/TileType';
 @Component
 struct GamePage {
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
+  // 分层画布：静态层（地板/特殊瓦片/墙，按需重画）+ 动态层（残影/玩家/overlay，每帧重画）
+  private staticCtx: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
   private ctx: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
+  // 静态层缓存命中判据：上次绘制的地图版本 / 层号 / 画布尺寸；任一变化才重画静态层
+  private lastMapVersion: number = -1;
+  private lastLayer: number = -1;
+  private lastDims: string = '';
+
+  // ===== 调试：移动刷新性能埋点 =====
+  // frameMs：相邻两帧间隔（含 16ms tick 等待 + JS 工作；>20 说明掉帧）
+  // dynMs/staticMs：动态层 / 静态层单次绘制耗时；staticRedraws：静态层累计重画次数
+  private lastFrameTs: number = 0;
+  private frameMs: number = 0;
+  private dynMs: number = 0;
+  private staticMs: number = 0;
+  private staticRedraws: number = 0;
+  private frameCount: number = 0;
+  @State debugOn: boolean = false;
+  @State debugText: string = '';
 
   // new-design 8.1：网格升到 19×19（逻辑 9×9 cell）
   private readonly GRID_COLS: number = 19;
@@ -105,6 +123,14 @@ struct GamePage {
     );
     this.engine = new GameEngine(map, this.program, 1, 1);
 
+    // 新局：作废静态层缓存（强制下一帧重画地图）+ 复位调试计数
+    this.lastMapVersion = -1;
+    this.lastLayer = -1;
+    this.lastDims = '';
+    this.staticRedraws = 0;
+    this.frameCount = 0;
+    this.lastFrameTs = 0;
+
     // 指令序列展示数据
     this.instructions = this.program !== null ? this.program.instructions : [];
     this.instrType = this.program !== null ? this.program.instrType : '机器指令执行';
@@ -115,7 +141,7 @@ struct GamePage {
     const e: GameEngine = this.engine as GameEngine;
     e.setTickCallback(() => {
       this.syncFromEngine(false);
-      this.renderMap();
+      this.renderFrame();
     });
     e.setFragmentPickedCallback((factText: string) => {
       this.syncFromEngine(false);
@@ -231,36 +257,99 @@ struct GamePage {
     return ins.mnemonic + ' ' + ins.operands;
   }
 
-  // 渲染入口
-  private renderMap(): void {
-    const w: number = this.ctx.width;
-    const h: number = this.ctx.height;
-
-    this.ctx.globalAlpha = 1;
-    this.ctx.clearRect(0, 0, w, h);
-    this.ctx.fillStyle = this.BG_COLOR;
-    this.ctx.fillRect(0, 0, w, h);
-
-    // 自适应瓦片半宽：19×19 更大，上限降到 28 vp 以容纳全图
+  // 计算当前等距参数（两张画布同尺寸，故共用一份 cfg）；wallH 通过 -layerOffset 携带
+  private computeCfg(w: number, h: number): IsoConfig {
     const maxHalfW: number = Math.floor((w - 40) / (this.GRID_COLS + this.GRID_ROWS));
     const halfW: number = Math.min(28, Math.max(6, maxHalfW));
     const halfH: number = Math.floor(halfW / 2);
     const wallH: number = Math.max(4, Math.floor(halfW * 0.45));
-
     const contentH: number = this.TARGET_LAYERS * wallH + (this.GRID_COLS + this.GRID_ROWS) * halfH;
     const topMargin: number = Math.max(0, (h - contentH) / 2);
     const originX: number = w / 2;
     const originY: number = topMargin + this.TARGET_LAYERS * wallH + halfH;
+    return new IsoConfig(halfW, halfH, -wallH, originX, originY);
+  }
 
-    const cfg: IsoConfig = new IsoConfig(halfW, halfH, -wallH, originX, originY);
-    this.lastCfg = cfg;
-
+  // 渲染入口（每帧）：静态层按需重画 + 动态层每帧重画
+  private renderFrame(): void {
     if (this.engine === null) {
+      return;
+    }
+    const w: number = this.ctx.width;
+    const h: number = this.ctx.height;
+    // 两张画布需都已就绪（width>0）才能渲染，避免首帧尺寸为 0
+    if (w <= 0 || h <= 0 || this.staticCtx.width <= 0) {
       return;
     }
     const e: GameEngine = this.engine as GameEngine;
 
-    drawMap(this.ctx, e.map, cfg, wallH, e.currentLayer, e.player, wallH * 0.6);
+    // 调试：帧间隔（上一帧到本帧的墙钟时间）
+    // tick 循环在 IDLE 时会停，故 >200ms 的大间隔视为"两段移动之间的停顿"，不计入帧率统计
+    const now: number = Date.now();
+    if (this.lastFrameTs > 0) {
+      const dt: number = now - this.lastFrameTs;
+      if (dt < 200) {
+        this.frameMs = dt;
+      }
+    }
+    this.lastFrameTs = now;
+
+    const cfg: IsoConfig = this.computeCfg(w, h);
+    this.lastCfg = cfg;
+    const wallH: number = -cfg.layerOffset;
+
+    // 静态层：仅当地图版本 / 层号 / 尺寸变化才重画（命中缓存则跳过整张地图重绘）
+    const dims: string = w + 'x' + h;
+    if (this.lastMapVersion !== e.mapVersion || this.lastLayer !== e.currentLayer || this.lastDims !== dims) {
+      this.lastMapVersion = e.mapVersion;
+      this.lastLayer = e.currentLayer;
+      this.lastDims = dims;
+      const s0: number = Date.now();
+      this.renderStatic(e, cfg, wallH, w, h);
+      this.staticMs = Date.now() - s0;
+      this.staticRedraws++;
+    }
+
+    const d0: number = Date.now();
+    this.renderDynamic(e, cfg, wallH, w, h);
+    this.dynMs = Date.now() - d0;
+
+    this.frameCount++;
+    this.maybeUpdateDebug(e);
+  }
+
+  // 调试面板节流刷新（每 ~15 帧），同时 console.info 便于 DevEco HiLog 抓取
+  private maybeUpdateDebug(e: GameEngine): void {
+    if (!this.debugOn) {
+      return;
+    }
+    if (this.frameCount % 15 !== 0) {
+      return;
+    }
+    const fps: number = this.frameMs > 0 ? Math.round(1000 / this.frameMs) : 0;
+    const tiles: number = this.GRID_COLS * this.GRID_ROWS;
+    const txt: string = 'frame ' + this.frameMs + 'ms (~' + fps + 'fps)\n'
+      + 'dyn ' + this.dynMs + 'ms · static ' + this.staticMs + 'ms ×' + this.staticRedraws + '\n'
+      + 'layer ' + e.currentLayer + ' · tiles ' + tiles + ' · phase ' + (e.isViaWaiting ? 'via' : 'run');
+    this.debugText = txt;
+    console.info('[perf] ' + txt.replace(/\n/g, ' | '));
+  }
+
+  // 静态层：背景 + 地板 + 特殊瓦片 + 墙（不含玩家）
+  private renderStatic(e: GameEngine, cfg: IsoConfig, wallH: number, w: number, h: number): void {
+    this.staticCtx.globalAlpha = 1;
+    this.staticCtx.clearRect(0, 0, w, h);
+    this.staticCtx.fillStyle = this.BG_COLOR;
+    this.staticCtx.fillRect(0, 0, w, h);
+    drawMapStatic(this.staticCtx, e.map, cfg, wallH, e.currentLayer);
+  }
+
+  // 动态层：透明清屏（透出静态层）+ 残影/玩家 + 各类 overlay
+  private renderDynamic(e: GameEngine, cfg: IsoConfig, wallH: number, w: number, h: number): void {
+    this.ctx.globalAlpha = 1;
+    this.ctx.clearRect(0, 0, w, h);  // 透明背景：不铺底色，露出下层静态画布
+
+    drawPlayerLayer(this.ctx, cfg, e.currentLayer, e.player, wallH * 0.6);
     drawRestructurePulse(
       this.ctx, cfg, e.currentLayer,
       e.lastOpenedCells, e.lastClosedCells, e.pulseAlpha, wallH
@@ -518,7 +607,7 @@ struct GamePage {
         .width('100%')
         .onClick(() => {
           this.initEngine();
-          this.renderMap();
+          this.renderFrame();
         })
     }
     .width(220)
@@ -571,12 +660,22 @@ struct GamePage {
       this.Sidebar()
 
       Stack({ alignContent: Alignment.BottomEnd }) {
-        Canvas(this.ctx)
+        // 底层：静态地图画布（仅地图变化时重画）
+        Canvas(this.staticCtx)
           .width('100%')
           .height('100%')
           .backgroundColor(this.BG_COLOR)
           .onReady(() => {
-            this.renderMap();
+            this.renderFrame();
+          })
+
+        // 顶层：动态画布（透明背景，露出静态层）；承接点击命中
+        Canvas(this.ctx)
+          .width('100%')
+          .height('100%')
+          .backgroundColor(Color.Transparent)
+          .onReady(() => {
+            this.renderFrame();
           })
           .onTouch((event: TouchEvent) => {
             const xy: number[] | null = this.firstTouchXY(event);
@@ -616,6 +715,32 @@ struct GamePage {
           .onClick(() => {
             this.showDrawer = !this.showDrawer;
           })
+
+        // 调试开关：切换性能埋点面板
+        Button(this.debugOn ? 'DBG ●' : 'DBG')
+          .fontSize(12)
+          .height(32)
+          .backgroundColor(this.debugOn ? '#2a1410' : '#1a2238dd')
+          .fontColor(this.debugOn ? '#ff9a40' : '#5a7088')
+          .position({ top: 52, right: 16 })
+          .onClick(() => {
+            this.debugOn = !this.debugOn;
+            if (!this.debugOn) {
+              this.debugText = '';
+            }
+          })
+
+        // 调试面板：帧间隔 / 动态层耗时 / 静态层重画次数
+        if (this.debugOn && this.debugText.length > 0) {
+          Text(this.debugText)
+            .fontSize(12)
+            .fontFamily('monospace')
+            .fontColor('#7df7d4')
+            .backgroundColor('#0a0e1acc')
+            .padding(8)
+            .borderRadius(6)
+            .position({ top: 92, right: 16 })
+        }
 
         this.DPad()
 

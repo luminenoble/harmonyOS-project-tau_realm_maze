@@ -171,5 +171,10 @@ S ≤ 1.2 / A ≤ 2.0 / B ≤ 4.0 / C > 4.0（作用于评级基准）
 - 2026-06-03：**阶段 4（渲染）** — `TileSet` 操作数三皮肤 + ALU 算子文本 + VIA CALL/RET + RAW 危险块；`drawTile` 分派传元数据。
 - 2026-06-03：**阶段 5（UI/页面）** — `DifficultyPage` / `LoadingPage` / `HoldingBar` / `InfoPanel` / `InstructionDrawer`；`GamePage` 19×19 + ProgramStore 接入 + 点击命中信息卡 + CPI 侧栏；`ResultPage` CPI 新公式；`DbHelper.instr_type`；`AIComment` 接指令上下文；`Index`→难度页；`main_pages` 注册。
 - 2026-06-03：**修复** — 上行 VIA 解锁阈值改为本层碎片总数（修 Easy/Hard 难度软锁）。
+- 2026-06-04：**运行期修复**（详见 [`perf-and-bugfix.md`](./perf-and-bugfix.md)）：
+  - 移动 HUD 卡顿：`syncFromEngine` 逐字段"变化才写" + 持有标签指纹比对。
+  - 强制降层不再打回 (1,1)：改落到下层最近 FLOOR（`findNearestFloor`）。
+  - "收集碎片回到起点"：过热降层从"落点触发"改为"尝试移动时触发"，拾取碎片不再连带弹层。
+  - 移动刷新卡顿（Canvas 全量重绘）：分层画布缓存——静态地图层按 `mapVersion` 重画、动态层每帧重画（`drawMapStatic` / `drawPlayerLayer`）；新增 `DBG` 性能埋点。
 
 > 说明：WSL 无法编译 ArkTS，已用 `tsc --noEmit` 对纯 TS 文件做语法预检（无 TS1xxx 语法错误）；`.ets`（ArkUI 装饰器）需在 DevEco Studio Build 验证，报错回传后迭代修复。

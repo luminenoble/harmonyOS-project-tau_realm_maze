@@ -132,6 +132,10 @@ export class GameEngine {
   // 防止 EXIT 被多次触发的通关锁
   private _victoryFired: boolean;
 
+  // 静态地图版本号：瓦片可见状态变化（拾取/通过/重构/切层）时自增，
+  // 供渲染层判定「是否需要重画离屏静态层缓存」，避免每帧全量重绘地板/墙/标签
+  private _mapVersion: number = 0;
+
   // score-algorithm：起局求解的理论最优 + 玩家实际 VIA tier 时序（评分对照）
   private _optimal: OptimalResult;
   private _playerViaTiers: number[];
@@ -295,6 +299,11 @@ export class GameEngine {
     return this._currentLayer;
   }
 
+  // 静态地图版本号（渲染层据此决定是否重画离屏静态层缓存）
+  get mapVersion(): number {
+    return this._mapVersion;
+  }
+
   // 当前层已拾取 / 总数
   get currentFragments(): number {
     return this._fragments[this._currentLayer];
@@ -442,6 +451,12 @@ export class GameEngine {
   // 目标格若为锁定 GATE 直接拒绝（与撞墙同语义）
   tryMove(dCol: number, dRow: number): boolean {
     if (this.phase !== EnginePhase.IDLE) {
+      return false;
+    }
+    // 过热强制降层只在「尝试移动」时触发，且发生在本步升温之前：
+    // 这样跨过 90 阈值的那一步能正常落地（含拾取碎片），降层留到玩家下一次主动移动，
+    // 避免"踩上碎片瞬间被弹回下层"的突兀体验（详见 docs/redesign 排查记录）
+    if (this.maybeForcePop()) {
       return false;
     }
     const tc: number = this.player.col + dCol;
@@ -609,6 +624,8 @@ export class GameEngine {
             this._currentLayer = tile.viaTarget;
           }
         }
+        // 切层后展示的是新层瓦片，静态层缓存需重画
+        this._mapVersion++;
         // Day 8：换层瞬间清残影（残影属于上一层）
         this.player.clearTrail();
         this.phase = EnginePhase.TRANSITION_IN;
@@ -621,10 +638,7 @@ export class GameEngine {
         this.phase = EnginePhase.IDLE;
         // Day 8：转场结束清 VIA shutter 标记
         this._isViaTransition = false;
-        // 切层完成后：先看新层是否也已经过热（连环弹层），再看是否触发重构
-        if (this.maybeForcePop()) {
-          return;
-        }
+        // 切层完成后检查是否触发重构；过热降层改由玩家下一次主动移动触发，不在落点/切层处连环弹层
         this.maybeStartRestructure();
       }
     } else if (this.phase === EnginePhase.RESTRUCTURE_WARN) {
@@ -672,10 +686,9 @@ export class GameEngine {
       GateLogic.unlockAllInLayer(this.map, this._currentLayer, this.player.heldOperands.length);
       ViaUnlock.unlockAllInLayer(this.map, this._currentLayer, count, this._fragmentTotals[this._currentLayer]);
       this.onFragmentPicked(this.loadFactText(label, kind));
+      this._mapVersion++;   // 碎片→地板 + 门/VIA 解锁，静态层需重画
       this.phase = EnginePhase.IDLE;
-      if (this.maybeForcePop()) {
-        return;
-      }
+      // 不在此触发过热降层：拾取碎片的落点永不弹层（降层留到下一次主动移动，见 tryMove）
       this.maybeStartRestructure();
       return;
     }
@@ -691,10 +704,8 @@ export class GameEngine {
       tile.locked = false;
       tile.aluOp = -1;
       this.onFragmentPicked('ALU ' + opName + ' 执行：' + src + ' → r' + tile.instrIndex + '（结果寄存器已生成）');
+      this._mapVersion++;   // ALU 门→地板，静态层需重画
       this.phase = EnginePhase.IDLE;
-      if (this.maybeForcePop()) {
-        return;
-      }
       this.maybeStartRestructure();
       return;
     }
@@ -709,10 +720,8 @@ export class GameEngine {
         ? 'RAW 数据冒险：寄存器 ' + lost + ' 值失效，需重新 LOAD。'
         : 'RAW 数据冒险：流水线气泡，无持有寄存器受影响。';
       this.onHazard(msg);
+      this._mapVersion++;   // RAW→地板，静态层需重画
       this.phase = EnginePhase.IDLE;
-      if (this.maybeForcePop()) {
-        return;
-      }
       this.maybeStartRestructure();
       return;
     }
@@ -724,6 +733,7 @@ export class GameEngine {
       this._heat.cool(this._currentLayer);
       tile.type = TileType.FLOOR;
       tile.locked = false;
+      this._mapVersion++;   // 散热通道→地板，静态层需重画
       this.phase = EnginePhase.IDLE;
       this.maybeStartRestructure();
       return;
@@ -734,10 +744,7 @@ export class GameEngine {
     //    这里仅停在格上回 IDLE，由 UI 点亮激活按钮等待玩家确认
 
     this.phase = EnginePhase.IDLE;
-    // 检查过热强制弹层（优先级高于重构）
-    if (this.maybeForcePop()) {
-      return;
-    }
+    // 过热降层不在落点触发（改由 tryMove 在玩家下一次移动时判定）
     this.maybeStartRestructure();
   }
 
@@ -828,6 +835,7 @@ export class GameEngine {
     );
     this._lastOpened = result.opened;
     this._lastClosed = result.closed;
+    this._mapVersion++;   // 重构开墙→地板，静态层需重画
   }
 
   // 强制弹层落点：在目标层找「与 (c0,r0) 曼哈顿距离最近的 FLOOR」cell

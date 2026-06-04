@@ -153,6 +153,76 @@ export function drawMap(
   }
 }
 
+// ===== 分层渲染（离屏静态层缓存）=====
+// 把"静态地图"（地板 + 特殊瓦片 + 墙）与"动态对象"（残影 + 玩家）拆成两层：
+//   静态层仅在 mapVersion / 层号 / 画布尺寸变化时重画（drawMapStatic）；
+//   动态层每帧重画（drawPlayerLayer）。
+// 代价：墙块全部位于静态层之下，玩家恒画在最上层 → 不再被前方墙体遮挡
+//   （短墙 wallH≈0.45×halfW，等距下遮挡轻微；换来每帧绘制量大幅下降）。
+
+// 静态层：地板 + 特殊瓦片（Pass 1）+ 墙块（Pass 2，墙间 painter's 排序）；不含玩家 / 残影
+export function drawMapStatic(
+  ctx: CanvasRenderingContext2D,
+  map: MapManager,
+  cfg: IsoConfig,
+  wallH: number,
+  layer: number = 0
+): void {
+  // Pass 1：地板层（WALL cell 仅垫地板，其余走完整 drawTile）
+  for (let r = 0; r < map.rows; r++) {
+    for (let c = 0; c < map.cols; c++) {
+      const tile: Tile | undefined = map.getTile(c, r, layer);
+      if (tile === undefined) {
+        continue;
+      }
+      const p: ScreenPoint = gridToScreen(c, r, layer, cfg);
+      if (tile.type === TileType.WALL) {
+        drawFloor(ctx, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, layer);
+      } else {
+        drawTile(ctx, tile, layer, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, wallH);
+      }
+    }
+  }
+
+  // Pass 2：墙块（按 row+col 升序，保证墙间前后遮挡正确）
+  const walls: number[][] = [];
+  for (let r = 0; r < map.rows; r++) {
+    for (let c = 0; c < map.cols; c++) {
+      const tile: Tile | undefined = map.getTile(c, r, layer);
+      if (tile !== undefined && tile.type === TileType.WALL) {
+        walls.push([c, r]);
+      }
+    }
+  }
+  walls.sort((a: number[], b: number[]) => {
+    const ka: number = a[0] + a[1];
+    const kb: number = b[0] + b[1];
+    if (ka !== kb) {
+      return ka - kb;
+    }
+    return a[1] - b[1];
+  });
+  for (let i = 0; i < walls.length; i++) {
+    const p: ScreenPoint = gridToScreen(walls[i][0], walls[i][1], layer, cfg);
+    drawWall(ctx, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, wallH);
+  }
+}
+
+// 动态层：玩家身后残影 + 玩家本体（每帧重画，画在静态层之上）
+export function drawPlayerLayer(
+  ctx: CanvasRenderingContext2D,
+  cfg: IsoConfig,
+  layer: number,
+  player: Player,
+  playerH: number
+): void {
+  if (player.trail.length > 0) {
+    drawTrail(ctx, player.trail, cfg, layer);
+  }
+  const p: ScreenPoint = gridToScreen(player.visualCol(), player.visualRow(), layer, cfg);
+  drawPlayer(ctx, p.x, p.y, cfg.tileHalfW, cfg.tileHalfH, playerH);
+}
+
 // Day 6：重构 PULSE 阶段的高亮叠加
 // opened cell（新开通道）→ 青绿菱形覆盖到地板位置
 // closed cell（新堵墙）→ 红色菱形覆盖到墙顶位置（-wallH 抬高，对齐 drawWall 顶面）
