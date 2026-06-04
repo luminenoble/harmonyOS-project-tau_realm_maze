@@ -14,7 +14,7 @@
 | 离线 fallback | 提供 1 个「向量内积」预置指令序列；API 不可用时自动降级 |
 | RAW 数据冒险格 | **纳入 MVP** |
 | 难度是否影响层数 | 不影响，固定 3 层；难度仅改变 AI 返回的指令数与每层并行宽度 |
-| 结算 CPI 公式 | **按 new-design 第七节替换**：`CPI = (步数 + VIA延迟) / 总指令数`；原 PathOptimizer 的 `τ/最优τ` 退役（保留文件但不再用于评级） |
+| 结算 CPI 公式 | **展示**按 new-design：`CPI = (步数 + VIA延迟) / 总指令数`；**评级**用校准比值 `τ/最优τ`（详见 §4.3 设计冲突说明）。PathOptimizer 保留用于评级基准 |
 | 路由接入 | `Index → DifficultyPage → LoadingPage → GamePage`（新增两页） |
 
 ---
@@ -114,14 +114,16 @@ interface Instruction { index, mnemonic, operands, comment, depth }
 
 `MapManager` 按层 round-robin 把操作数标签贴到已放置的 FRAGMENT 上，把 ALU 算子贴到 GATE 上。
 
-### 4.3 CPI 与评级（Semantics.ts 复用阈值）
+### 4.3 CPI 与评级（展示用新公式，评级用校准比值）
 
 ```
-CPI = (steps + tauVia) / totalInstr
-S ≤ 1.2 / A ≤ 2.0 / B ≤ 4.0 / C > 4.0
+展示 CPI = (steps + tauVia) / totalInstr      ← new-design 第七节，结算/HUD 显示
+评级基准 = τ / 最优τ（PathOptimizer）         ← 落在 1~4，匹配 S/A/B/C 阈值
+S ≤ 1.2 / A ≤ 2.0 / B ≤ 4.0 / C > 4.0（作用于评级基准）
 ```
 
-> 注意：分母换成「总指令数」后，CPI 量级与原「τ/最优τ」不同，但 S/A/B/C 阈值沿用 new-design 第七节给定值。
+> ⚠️ **实现期发现的设计冲突**：new-design 第七节同时给出「(步数+延迟)/指令数」公式与「S≤1.2」阈值，但 19×19 地图收集 9~15 操作数需 60~150 步，该 CPI 量级恒在 8~12 → 永远 C。
+> **已确认决策**：结算/HUD 仍按新公式**展示** CPI 数值（忠于 new-design），但 S/A/B/C **评级改用校准比值 τ/最优τ**（沿用 PathOptimizer，落在 1~4）。两者并存，结算页与侧栏均标注「评级基准 τ/最优τ」。
 
 ### 4.4 RAW 数据冒险
 

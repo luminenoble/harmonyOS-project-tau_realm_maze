@@ -149,7 +149,7 @@ struct ResultPage {
     }
   }
 
-  // CPI = (步数 + VIA延迟) / 总指令数（new-design 第七节）；totalInstr 已兜底 ≥1
+  // 展示用 CPI = (步数 + VIA延迟) / 总指令数（new-design 第七节）；totalInstr 已兜底 ≥1
   private cpi(): number {
     if (this.totalInstr <= 0) {
       return this.tau;
@@ -157,9 +157,18 @@ struct ResultPage {
     return (this.steps + this.tauVia) / this.totalInstr;
   }
 
-  // CPI 评级：S ≤1.2 / A ≤2.0 / B ≤4.0 / C
+  // 评级基准 = τ / 理论最优 τ（落在 1~4，与 S/A/B/C 阈值匹配）
+  // 注：展示 CPI 用新公式，但其量级（步数/指令数）与阈值不兼容，故评级改用此校准比值
+  private ratingRatio(): number {
+    if (this.optimalTau <= 0) {
+      return this.tau;
+    }
+    return this.tau / this.optimalTau;
+  }
+
+  // CPI 评级：S ≤1.2 / A ≤2.0 / B ≤4.0 / C（按 τ/最优τ 比值）
   private rating(): string {
-    return cpiRating(this.cpi());
+    return cpiRating(this.ratingRatio());
   }
 
   // 评级牌颜色：S 金 / A 青绿 / B 银 / C 暗红
@@ -236,6 +245,11 @@ struct ResultPage {
       Text('总周期 τ ' + this.tau + ' cycles · RAW 冒险 ' + this.hazards + ' 次 · 理论最优步数 ' + this.optimalSteps)
         .fontSize(12)
         .fontColor('#5a7088')
+        .margin({ bottom: 2 })
+      // 评级基准：τ/最优τ（展示 CPI 量级与阈值不兼容，评级用此校准比值）
+      Text('评级基准  τ/最优τ = ' + this.ratingRatio().toFixed(2))
+        .fontSize(12)
+        .fontColor(this.ratingColor())
         .margin({ bottom: 18 })
 
       // 流水线效率（最优 / 实际）

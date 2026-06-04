@@ -88,6 +88,7 @@ export function buildAIPrompt(stats: AIPromptStats): string {
     '请以流水线 / CPI 视角给出 3 行以内、不超过 90 字的中文点评并附一条优化建议：',
     '- 指令类型：' + stats.instrType + '（共 ' + stats.totalInstr + ' 条指令）',
     '- CPI = ' + cpi.toFixed(2) + '（(步数 ' + stats.steps + ' + 缓存延迟 ' + stats.tauVia + ') / 指令数 ' + stats.totalInstr + '）',
+    '- 评级基准 τ/最优τ = ' + (stats.optimalTau > 0 ? (stats.tau / stats.optimalTau).toFixed(2) : 'N/A') + '（评级即据此）',
     '- 缓存命中：L1$×' + stats.l1 + ' / L2$×' + stats.l2 + ' / DRAM×' + stats.mem,
     '- 缓存层级选择：实际 [' + formatTierSeq(stats.playerViaTiers) + ']  vs  最优 [' + formatTierSeq(stats.optimalViaTiers) + ']',
     '- 数据冒险（RAW）触发：' + stats.hazards + ' 次',

@@ -56,6 +56,8 @@ struct GamePage {
   @State totalAll: number = 0;
   @State canInteract: boolean = false;
   @State interactHint: string = '';
+  // 理论最优 τ（CPI 评级基准分母）
+  @State optimalTau: number = 1;
 
   // 指令重构 HUD
   @State heldLabels: string[] = [];
@@ -161,6 +163,7 @@ struct GamePage {
     this.tau = e.tau;
     this.totalPicked = e.totalFragmentsPicked;
     this.totalAll = e.totalFragmentsAll;
+    this.optimalTau = e.optimalTau;
     this.canInteract = e.canInteract;
     this.interactHint = e.interactHint;
     // 指令状态：持有条 / 进度 / CPI（每 tick 用新数组触发刷新）
@@ -361,15 +364,16 @@ struct GamePage {
     return '#22d3a8';
   }
 
-  // CPI 颜色：≤1.2 金 / ≤2.0 青绿 / ≤4.0 银 / 其余红
+  // CPI 颜色：按评级基准 τ/最优τ 着色（展示 CPI 量级与阈值不兼容，故用比值判级）
   private cpiColor(): string {
-    if (this.cpi <= 1.2) {
+    const ratio: number = this.optimalTau > 0 ? this.tau / this.optimalTau : this.cpi;
+    if (ratio <= 1.2) {
       return '#ffd24a';
     }
-    if (this.cpi <= 2.0) {
+    if (ratio <= 2.0) {
       return '#22d3a8';
     }
-    if (this.cpi <= 4.0) {
+    if (ratio <= 4.0) {
       return '#d6dde6';
     }
     return '#ff6b6b';
@@ -449,9 +453,13 @@ struct GamePage {
         .fontWeight(FontWeight.Bold)
         .fontColor(this.cpiColor())
         .margin({ top: 4, bottom: 1 })
+      Text('评级基准 τ/最优 ' + (this.optimalTau > 0 ? (this.tau / this.optimalTau).toFixed(2) : '—'))
+        .fontSize(10)
+        .fontColor('#5a7088')
       Text('指令 ' + this.executedCount + ' / ' + (this.instructions.length > 0 ? this.instructions.length : this.totalAll))
         .fontSize(11)
         .fontColor('#5a7088')
+        .margin({ top: 2 })
 
       Blank()
 
