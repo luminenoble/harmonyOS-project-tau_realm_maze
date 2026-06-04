@@ -3,6 +3,7 @@
 // FLOOR / WALL 完整绘制；VIA / GATE / FRAGMENT 用占位标识，Day 4-5 再细化
 
 import { Tile, TileType } from '../types/TileType';
+import { FragmentKind, aluOpName } from '../data/Instruction';
 
 // 颜色：地板用冷蓝（暗底 + 亮蓝描边），墙体用黑金（金顶 + 黑侧）
 // 冷暖对立 + 大色相差，小屏上路 ↔ 墙一眼可分
@@ -33,9 +34,20 @@ const COLOR_VIA_L2_RING: string = '#5a6878';
 const COLOR_VIA_MEM_RING: string = '#603a18';
 const COLOR_VIA_LOCKED: string = '#5a5a5a';    // 灰：上行 VIA 锁定
 const COLOR_VIA_RING_LOCKED: string = '#8a2020'; // 锁定 VIA 暗红警示圈
-const COLOR_GATE_LOCKED: string = '#d63b3b';   // 红：锁定逻辑门
-const COLOR_GATE_UNLOCKED: string = '#22d3a8'; // 青绿：已解锁门（淡色提示边框）
-const COLOR_FRAGMENT: string = '#ffd166';      // 黄：信号碎片
+const COLOR_GATE_LOCKED: string = '#d63b3b';   // 红：锁定 ALU 门
+const COLOR_GATE_UNLOCKED: string = '#22d3a8'; // 青绿：已解锁门（可执行）
+const COLOR_FRAGMENT: string = '#ffd166';      // 黄：信号碎片（兜底）
+// 指令重构：操作数碎片三类皮肤（寄存器蓝 / 立即数金 / 地址橙）
+const COLOR_FRAG_REGISTER: string = '#4aa3ff';
+const COLOR_FRAG_IMMEDIATE: string = '#ffd166';
+const COLOR_FRAG_ADDRESS: string = '#ff9a40';
+// VIA CALL/RET 文本 + ALU 门算子文本
+const COLOR_VIA_TEXT: string = '#0a0e1a';
+const COLOR_GATE_TEXT: string = '#ffe0e0';
+// RAW 数据冒险格：警示品红 + 斜纹
+const COLOR_RAW_FILL: string = '#b026ff';
+const COLOR_RAW_STRIPE: string = '#ff5ad6';
+const COLOR_RAW_TEXT: string = '#ffe0ff';
 // THERMAL_VIA：青白冷光双层环
 const COLOR_THERMAL_OUTER: string = '#a8e6ff';
 const COLOR_THERMAL_INNER: string = '#e0f4ff';
@@ -157,6 +169,29 @@ function drawMarker(
   ctx.fill();
 }
 
+// 瓦片中心小号文本（CALL/RET、ALU 算子、RAW 等标签）；仅在瓦片够大时绘制避免糊成一团
+// 绘后显式还原 textAlign/baseline，防 HarmonyOS Canvas 状态泄漏
+function drawCenterLabel(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  halfW: number,
+  text: string,
+  color: string
+): void {
+  if (halfW < 14 || text.length === 0) {
+    return;
+  }
+  const fontPx: number = Math.max(7, Math.floor(halfW * 0.34));
+  ctx.font = fontPx + 'px sans-serif';
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, cx, cy);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+}
+
 // VIA 渲染：地板 + 方向感知三角箭头 + tier 三色（金/银/铜）
 // up=true 上行（指向更高层号），三角朝上；up=false 下行，三角朝下
 // locked=true：填色与边圈换灰 + 暗红警示圈
@@ -209,10 +244,16 @@ export function drawVia(
   ctx.closePath();
   ctx.fillStyle = locked ? COLOR_VIA_LOCKED : fillColor;
   ctx.fill();
+
+  // 指令重构：上行 VIA 标 CALL（跨层跳转），下行标 RET（返回）；锁定不标
+  if (!locked) {
+    drawCenterLabel(ctx, cx, cy, halfW, up ? 'CALL' : 'RET', COLOR_VIA_TEXT);
+  }
 }
 
-// GATE 渲染：地板 + 横向三道栅栏 + 中心锁/对号
-// locked=true：红栅栏 + 锁状方块；locked=false：青绿栅栏 + 圆点（已解锁提示）
+// GATE = ALU 运算门：地板 + 横向三道栅栏 + 中心算子文本
+// locked=true：红栅栏（操作数不足）；locked=false：青绿栅栏 + 算子名（可执行）
+// aluOp ≥ 0 时中心显示算子助记符（ADD/MUL/...），否则退回锁/钥匙孔标识
 export function drawGate(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -220,7 +261,8 @@ export function drawGate(
   halfW: number,
   halfH: number,
   locked: boolean,
-  layer: number = 1
+  layer: number = 1,
+  aluOp: number = -1
 ): void {
   drawFloor(ctx, cx, cy, halfW, halfH, layer);
   const color: string = locked ? COLOR_GATE_LOCKED : COLOR_GATE_UNLOCKED;
@@ -237,20 +279,71 @@ export function drawGate(
     ctx.stroke();
   }
 
-  // 中心标识：锁定一个实心小方块（锁体），解锁后改为空心圆（钥匙孔）
-  ctx.fillStyle = color;
-  const cs: number = Math.max(3, halfW * 0.18);
-  if (locked) {
-    ctx.fillRect(cx - cs, cy - cs, cs * 2, cs * 2);
+  // 中心标识：优先显示 ALU 算子名；无算子时退回锁体 / 钥匙孔
+  if (aluOp >= 0) {
+    drawCenterLabel(ctx, cx, cy, halfW, aluOpName(aluOp), COLOR_GATE_TEXT);
   } else {
-    ctx.beginPath();
-    ctx.arc(cx, cy, cs, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillStyle = color;
+    const cs: number = Math.max(3, halfW * 0.18);
+    if (locked) {
+      ctx.fillRect(cx - cs, cy - cs, cs * 2, cs * 2);
+    } else {
+      ctx.beginPath();
+      ctx.arc(cx, cy, cs, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }
 
-// FRAGMENT 占位：地板 + 黄色标识（Day 5 替换为闪烁碎片）
+// FRAGMENT = 操作数碎片：地板 + 按 kind 选皮肤（寄存器蓝 / 立即数金 / 地址橙）+ 标签
+// kind：FragmentKind；label：操作数文本（如 eax / #5 / [addr_A0]）
 export function drawFragment(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  halfW: number,
+  halfH: number,
+  layer: number = 1,
+  kind: number = -1,
+  label: string = ''
+): void {
+  drawFloor(ctx, cx, cy, halfW, halfH, layer);
+
+  // 皮肤色
+  let color: string = COLOR_FRAGMENT;
+  if (kind === FragmentKind.REGISTER) {
+    color = COLOR_FRAG_REGISTER;
+  } else if (kind === FragmentKind.IMMEDIATE) {
+    color = COLOR_FRAG_IMMEDIATE;
+  } else if (kind === FragmentKind.ADDRESS) {
+    color = COLOR_FRAG_ADDRESS;
+  }
+
+  if (kind === FragmentKind.IMMEDIATE) {
+    // 立即数：金色小方标签
+    const s: number = halfW * 0.42;
+    ctx.fillStyle = color;
+    ctx.fillRect(cx - s, cy - s * 0.6, s * 2, s * 1.2);
+  } else if (kind === FragmentKind.ADDRESS) {
+    // 地址：橙色方块 + 内描边（"[ ]"语义）
+    const s: number = halfW * 0.45;
+    ctx.fillStyle = color;
+    ctx.fillRect(cx - s, cy - s * 0.6, s * 2, s * 1.2);
+    ctx.strokeStyle = '#0a0e1a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(cx - s * 0.55, cy - s * 0.32, s * 1.1, s * 0.64);
+  } else {
+    // 寄存器（及兜底）：蓝色芯片菱形
+    drawMarker(ctx, cx, cy, halfW, halfH, color);
+  }
+
+  // 标签：去掉地址方括号显示更紧凑
+  const shown: string = label.replace('[', '').replace(']', '');
+  drawCenterLabel(ctx, cx, cy + halfH * 0.05, halfW, shown, COLOR_VIA_TEXT);
+}
+
+// RAW_HAZARD = 数据冒险格：地板 + 品红斜纹危险块 + "RAW" 标签
+export function drawRawHazard(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
@@ -259,7 +352,29 @@ export function drawFragment(
   layer: number = 1
 ): void {
   drawFloor(ctx, cx, cy, halfW, halfH, layer);
-  drawMarker(ctx, cx, cy, halfW, halfH, COLOR_FRAGMENT);
+
+  // 品红菱形底
+  const r: number = 0.62;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - halfH * r);
+  ctx.lineTo(cx + halfW * r, cy);
+  ctx.lineTo(cx, cy + halfH * r);
+  ctx.lineTo(cx - halfW * r, cy);
+  ctx.closePath();
+  ctx.fillStyle = COLOR_RAW_FILL;
+  ctx.fill();
+
+  // 两道高光斜纹（危险警示）
+  ctx.strokeStyle = COLOR_RAW_STRIPE;
+  ctx.lineWidth = Math.max(1, halfW * 0.1);
+  ctx.beginPath();
+  ctx.moveTo(cx - halfW * 0.35, cy + halfH * 0.18);
+  ctx.lineTo(cx + halfW * 0.1, cy - halfH * 0.4);
+  ctx.moveTo(cx - halfW * 0.05, cy + halfH * 0.4);
+  ctx.lineTo(cx + halfW * 0.4, cy - halfH * 0.18);
+  ctx.stroke();
+
+  drawCenterLabel(ctx, cx, cy, halfW, 'RAW', COLOR_RAW_TEXT);
 }
 
 // THERMAL_VIA：地板 + 青白冷光双层同心圆 + 外圈虚环
@@ -363,16 +478,19 @@ export function drawTile(
       );
       break;
     case TileType.GATE:
-      drawGate(ctx, cx, cy, halfW, halfH, tile.locked, currentLayer);
+      drawGate(ctx, cx, cy, halfW, halfH, tile.locked, currentLayer, tile.aluOp);
       break;
     case TileType.FRAGMENT:
-      drawFragment(ctx, cx, cy, halfW, halfH, currentLayer);
+      drawFragment(ctx, cx, cy, halfW, halfH, currentLayer, tile.fragKind, tile.operandLabel);
       break;
     case TileType.THERMAL_VIA:
       drawThermalVia(ctx, cx, cy, halfW, halfH, currentLayer);
       break;
     case TileType.EXIT:
       drawExit(ctx, cx, cy, halfW, halfH, currentLayer);
+      break;
+    case TileType.RAW_HAZARD:
+      drawRawHazard(ctx, cx, cy, halfW, halfH, currentLayer);
       break;
     default:
       drawFloor(ctx, cx, cy, halfW, halfH, currentLayer);
