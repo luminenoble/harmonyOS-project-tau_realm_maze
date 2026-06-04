@@ -118,36 +118,38 @@ tsc --noEmit --allowJs --target ES2017 \
   /mnt/d/wsl-share/harmony-game/app-storage/entry/src/main/ets/game/core/GameEngine.ts
 ```
 
-## 核心玩法设定
+## 核心玩法设定（指令序列重构版，见 `docs/redesign/`）
 
-- **核心隐喻**：玩家 = 一段数据包，在三维堆叠芯片（地图）中穿行，以最低τ值（时延）收集所有信号碎片
-- **视角**：2.5D 等距菱形视角（Isometric），用 Canvas 实现坐标变换
-- **地图结构**：多层叠加，每层为独立的二维网格；层间通过 VIA 节点竖向穿越
-- **VIA 三级缓存模型**：
-  - L1-VIA（黄金色，稀少）：延迟 1 步，对应 L1 缓存
-  - L2-VIA（银色，中等）：延迟 3 步，对应 L2 缓存
-  - MEM-VIA（铜色，普通）：延迟 6 步，对应主存储
-  - 踩上 VIA 时显示"时钟周期等待"进度条动效
-- **τ 最小化**：总步数 + 各 VIA 延迟累计 = 本局 τ 值；结算页显示 S/A/B/C 评级
-- **散热系统**（映射三维堆叠散热瓶颈）：
-  - 每层维护独立热量值（0–100），同层每步 +热量
-  - 底层（Layer 0，器件层）积热速度 ×2
-  - 热量 ≥ 80 触发过热减速；≥ 100 强制降层
-  - 地图中散布散热通道节点（THERMAL_VIA），踩踏降热 -30
-  - 不触发过热完成关卡可获得"TDP 优化"额外加分
-- **动态地图**：每 20 步触发局部通道重构，象征芯片动态路由；重构前红色警告，重构后青绿脉冲
-- **解谜元素**：收集"信号碎片"、激活逻辑门、解锁层间 VIA 节点
-- **AI 结算评语（方案 A）**：结算时将路径数据格式化为 prompt 传入 AI，生成"芯片工程师视角"的路径评语；演示版使用占位实现，接口预留（`AIComment.ts`）
-- **场景交互**：点击交互对象触发芯片知识科普文本，无战斗系统
+> 重构后玩家身份从"数据包"升级为 **控制信号 / 一条机器指令序列**；详见 `docs/redesign/new-design.md` 与 `redesign-plan.md`。
+
+- **核心隐喻**：玩家 = CPU 控制单元发出的**控制信号**，在三维堆叠芯片中穿行，**执行一段 AI 生成的合法汇编指令序列**（LOAD/MOV 取操作数 → ALU 运算 → STORE 写回）
+- **关卡来源（DeepSeek API）**：每局开始按难度向 DeepSeek 请求一段合法汇编序列；解析为操作数池 + ALU 序列后分配到地图。API 不可用时降级为离线"向量内积"预置序列（`DeepSeekService.ts` / `InstructionGraph.ts`）
+- **难度**：Easy 9 条 / Normal 12 条 / Hard 15 条指令；难度只改指令数与每层碎片数，层数恒为 3
+- **视角**：2.5D 等距菱形视角（Isometric），Canvas 坐标变换
+- **碎片 = 操作数**：收集碎片 = 执行一条 LOAD/MOV，操作数入"持有寄存器"列表；三类皮肤——寄存器（蓝）/ 立即数（金）/ 内存地址（橙）
+- **ALU 门**：障碍门承载一条运算指令（ADD/MUL/AND/...），需持有操作数才能通过 = 执行该 ALU，通过后生成结果寄存器
+- **RAW 数据冒险格**：踩上失效一个持有寄存器（模拟读后写流水线气泡），需重新 LOAD
+- **VIA 三级缓存模型**（皮肤更新为 CALL/RET）：L1（金/延迟1）/ L2（银/延迟3）/ MEM（铜/延迟6）；上行=CALL 跨层跳转、下行=RET 返回；踩上显示"时钟周期等待"进度条
+- **CPI 评分**：展示 `CPI = (步数 + VIA延迟) / 总指令数`（new-design 第七节）；S/A/B/C **评级**用校准比值 `τ/最优τ`（PathOptimizer 求解，量级与阈值匹配，见 `docs/redesign/redesign-plan.md §4.3`）
+- **散热系统**（映射三维堆叠散热瓶颈）：每层独立热量（0–100），**三层独立积热速率 [2, 1.5, 1]**；≥60 减速、≥90 强制降层（落到下层最近 FLOOR，不再打回起点）；散热通道 THERMAL_VIA 踩踏降热 30
+- **动态地图**：每 20 步触发局部通道重构（仅开墙不堵路），重构前红色警告、重构后青绿脉冲
+- **信息面板**：点击碎片/门/VIA/RAW/散热弹出右侧信息卡；右上角抽屉常驻显示本局指令序列与执行进度
+- **AI 结算评语**：结算把指令类型/CPI/缓存选择/RAW 次数喂给 DeepSeek 生成"微架构工程师"点评；无 key/失败时规则占位（`AIComment.ts`）
 
 ## 用户系统 & 数据持久化（SQLite）
 
 基于 HarmonyOS `@kit.ArkData` 的 `relationalStore`，本地 SQLite 持久化用户与游戏记录。
 
-- **入口**：`utils/DbHelper.ts`（数据库初始化 + 用户/记录表 CRUD），`utils/UserSession.ts`（登录态 + 当前用户缓存）
+- **入口**：`utils/DbHelper.ts`（数据库初始化 + CRUD），`utils/UserSession.ts`（登录态 + 当前用户缓存）
 - **页面**：`pages/LoginPage.ets`（昵称登录/游客模式），`pages/HistoryPage.ets`（历史记录 + 称号解锁）
 - **登录态持久化**：`PersistentStorage.persistProp<number>('currentUserId')`，重启后自动恢复；`EntryAbility.onWindowStageCreate` 据此决定首页（已登录 → `Index`，否则 → `LoginPage`）
-- **数据表**：`UserRecord`（id / nickname / isGuest / titleIndex / 时间戳）和 `GameRecord`（id / userId / steps / tauVia / tau / rating）
+- **数据表（已拆为 5 表，符合 3NF，见 `答辩/db-table-split.md`）**：
+  - `users`（id / nickname / is_guest / created_at / last_login）—— 用户身份
+  - `titles`（id / user_id FK / title_index / unlocked_at）—— 称号解锁记录（1:N）
+  - `game_sessions`（id / user_id FK / steps / tau_via / tau / rating / played_at）—— 每局核心指标
+  - `cache_hits`（id / session_id FK / tier / hit_count）—— 缓存命中明细（1 局 3 行，替代原 l1/l2/mem 横向列）
+  - `session_analysis`（id / session_id FK / heat_l0/l1/l2 / instr_type / hazards / ai_comment）—— 结算分析（热量峰值拆为原子列、AI 长文本分离）
+  - 写入需事务包装（1 条 session + 3 条 cache_hits + 1 条 analysis）；ER：`users 1─N titles`、`users 1─N game_sessions 1─{3 cache_hits, 1 session_analysis}`
 - **称号系统**：基于历史最佳评级（S/A/B/C）解锁等级称号，由 `TITLE_LIST` + `getMaxTitleIndex` 控制可选范围
 - **DB 初始化**：`EntryAbility.onCreate` 调 `initDb(this.context)` 异步建表，幂等
 
@@ -168,37 +170,55 @@ app-storage/entry/
 └── src/main/
     ├── ets/
     │   ├── pages/
-    │   │   ├── Index.ets          # 主菜单页（含称号选择 + 音乐面板）
+    │   │   ├── Index.ets          # 主菜单页（称号选择 + 音乐面板，进入跳难度页）
     │   │   ├── LoginPage.ets      # 登录页（昵称登录 / 游客模式）
+    │   │   ├── DifficultyPage.ets # 难度选择页（Easy/Normal/Hard）
+    │   │   ├── LoadingPage.ets    # 终端风格加载页（DeepSeek 生成指令序列 + 解析）
     │   │   ├── HistoryPage.ets    # 历史记录页（游戏记录 + 称号解锁）
-    │   │   ├── GamePage.ets       # 游戏主页面（Canvas 宿主 + 音乐面板）
-    │   │   └── ResultPage.ets     # 通关结算页（含τ评级 & AI评语）
+    │   │   ├── GamePage.ets       # 游戏主页面（双画布分层渲染 + HUD + 组件挂载）
+    │   │   └── ResultPage.ets     # 通关结算页（CPI 评级 & AI 评语）
     │   ├── components/
-    │   │   └── MusicPanel.ets     # 可复用音乐面板（浮动按钮 + 展开式控制 / 列表）
+    │   │   ├── MusicPanel.ets        # 可复用音乐面板（浮动按钮 + 展开式控制 / 列表）
+    │   │   ├── HoldingBar.ets        # 顶部"持有寄存器"状态条
+    │   │   ├── InfoPanel.ets         # 右侧点击信息卡片
+    │   │   └── InstructionDrawer.ets # 右侧指令序列抽屉（执行进度高亮）
     │   ├── game/
     │   │   ├── core/
-    │   │   │   ├── GameEngine.ts  # 游戏主循环、状态机
-    │   │   │   ├── MapManager.ts  # 地图生成、动态重构、THERMAL_VIA 布置
-    │   │   │   ├── Player.ts      # 玩家状态、移动逻辑、τ累计
-    │   │   │   └── HeatManager.ts # 每层热量维护、过热减速/弹层逻辑
+    │   │   │   ├── GameEngine.ts  # 主循环 / 状态机 / 指令执行 / CPI / mapVersion
+    │   │   │   ├── MapManager.ts  # 多层地图生成 + ProgramPlan 语义标注
+    │   │   │   ├── Player.ts      # 玩家状态、移动补间、持有操作数、残影
+    │   │   │   ├── HeatManager.ts # 每层热量（三层速率）、过热减速/弹层
+    │   │   │   ├── Restructurer.ts# 动态重构（仅开墙）
+    │   │   │   └── PathOptimizer.ts# 理论最优 τ 求解（评级基准）
     │   │   ├── render/
-    │   │   │   ├── IsoRenderer.ts # 等距坐标变换与绘制
-    │   │   │   ├── TileSet.ts     # 瓦片定义（含 L1/L2/MEM-VIA、THERMAL_VIA）
-    │   │   │   └── UIOverlay.ts   # HUD（层数、步数、信号碎片数、热量条、τ仪表盘）
-    │   │   └── puzzle/
-    │   │       ├── GateLogic.ts   # 逻辑门谜题
-    │   │       └── ViaUnlock.ts   # VIA 三级解锁 & 延迟模型
+    │   │   │   ├── IsoRenderer.ts # 等距绘制：drawMapStatic（静态层缓存）/ drawDynamicLayer（墙+玩家 painter's）
+    │   │   │   ├── TileSet.ts     # 瓦片皮肤（操作数三类 / ALU 门 / VIA CALL-RET / RAW）
+    │   │   │   ├── PlayerRenderer.ts# 玩家与残影绘制
+    │   │   │   └── UIOverlay.ts   # 转场 / 警告 / VIA 进度条等覆盖层
+    │   │   ├── puzzle/
+    │   │   │   ├── GateLogic.ts   # ALU 门通过判定（按持有操作数）
+    │   │   │   └── ViaUnlock.ts   # VIA 解锁（阈值=本层碎片总数）& 延迟模型
+    │   │   ├── data/
+    │   │   │   ├── Instruction.ts # 指令/操作数/ALU/难度模型与工具
+    │   │   │   ├── Semantics.ts   # 机器指令语义映射 + CPI 评级阈值
+    │   │   │   └── ChipFacts.ts   # 芯片科普文案
+    │   │   └── types/
+    │   │       └── TileType.ts    # 瓦片枚举 + Tile（含指令语义元数据）
     │   └── utils/
-    │       ├── MazeGenerator.ts   # 随机迷宫生成（递归回溯算法）
-    │       ├── IsoMath.ts         # 等距坐标与屏幕坐标互转工具
-    │       ├── AIComment.ts       # AI 结算评语接口（演示版占位，接口预留）
-    │       ├── DbHelper.ts        # SQLite 数据库：用户表 / 游戏记录表 CRUD
+    │       ├── MazeGenerator.ts   # 随机迷宫（递归回溯）+ 各类瓦片放置
+    │       ├── IsoMath.ts         # 网格 ↔ 屏幕坐标互转
+    │       ├── InstructionGraph.ts# 指令 JSON 解析 → ProgramPlan（操作数池 + ALU 序列）
+    │       ├── DeepSeekService.ts # DeepSeek 指令序列生成 + 离线 fallback
+    │       ├── ProgramStore.ts    # 本局指令程序跨页共享（模块单例）
+    │       ├── ApiConfig.ts       # DeepSeek key / endpoint / model
+    │       ├── AIComment.ts       # AI 结算评语（DeepSeek + 规则占位降级）
+    │       ├── DbHelper.ts        # SQLite：5 表 CRUD（users/titles/sessions/cache_hits/analysis）
     │       ├── UserSession.ts     # 登录态持久化 + 当前用户缓存 + 称号管理
     │       └── MusicService.ts    # 音乐服务单例（AVPlayer / 播放列表 / 音量 / 持久化）
     └── resources/
         ├── rawfile/
         │   └── music/             # 内置音乐资源（启动时自动扫描加载）
-        └── media/                 # 像素风瓦片图（芯片电路风格）
+        └── media/                 # 应用图标（layered_image：background+foreground）/ startIcon
 ```
 
 ## 视觉风格
@@ -212,19 +232,28 @@ app-storage/entry/
 - **动态地图特效**：通道关闭时闪烁红色警告，新通道开启时青绿脉冲
 - **HUD**：τ 仪表盘（步数 + VIA延迟累计）+ 热量条（蓝→黄→红）
 
-## 地图参数（MVP）
+## 地图参数（指令重构版）
 
 | 参数 | 值 |
 |------|----|
-| 层数 | 3 层（Layer 0-2） |
-| 单层网格 | 13 × 13（逻辑 6×6 cell + 厚墙，对齐递归回溯算法） |
+| 层数 | 3 层（Layer 0-2），不随难度变化 |
+| 单层网格 | **19 × 19**（逻辑 9×9 cell + 厚墙） |
 | VIA 节点数/层 | 3-4 个（L1:L2:MEM ≈ 1:2:3） |
 | THERMAL_VIA 数/层 | 2-3 个 |
-| 动态重构周期 | 每 20 步触发一次 |
-| 信号碎片数/层 | 3 个 |
+| RAW 数据冒险格/层 | 1-2 个 |
+| 信号碎片数/层 | 难度化：Easy 2 / Normal 3 / Hard 4 |
+| 动态重构周期 | 每 20 步触发一次（仅开墙不堵路） |
 | VIA 延迟（时钟周期） | L1=1 / L2=3 / MEM=6 |
-| 过热阈值 | 80（减速）/ 100（强制降层） |
-| 底层积热倍率 | ×2 |
+| 过热阈值 | **60（减速）/ 90（强制降层）** |
+| 三层积热速率/步 | **Layer 0=+2 / 1=+1.5 / 2=+1**（4:3:2 耐久比） |
+
+## 渲染与性能（重点）
+
+- **分层画布缓存**：`GamePage` 用两张同尺寸 Canvas——底层 `staticCtx`（地板 + 特殊瓦片，仅 `GameEngine.mapVersion` / 层号 / 尺寸变化时重画）+ 顶层透明 `ctx`（残影 + 墙 + 玩家 + overlay，每帧重画）。最贵的 19×19 地板与文字标签被缓存，移动时只重画动态层。
+- **绘制顺序与遮挡**：静态层只画地板/特殊瓦片；动态层 `drawDynamicLayer` 把**墙块与玩家放进同一数组按 `row+col` 升序 painter's 排序**，玩家加 `+0.001` 偏移 → 走墙后被前方墙遮挡、走墙前覆盖后方墙（正确的等距前后遮挡）。
+- **HUD 防抖**：`syncFromEngine` 逐字段"变化才写"`@State`、持有标签按内容指纹比对，避免动画期间每帧重渲整个侧栏。
+- **调试**：GamePage 右上 `DBG` 开关输出 `frameMs / dynMs / staticMs×N`（console.info `[perf]` + 面板），区分 Canvas 绘制 vs 调度/重渲 瓶颈。
+- 排查记录见 `docs/redesign/perf-and-bugfix.md`。
 
 ## 备选降级方案
 
