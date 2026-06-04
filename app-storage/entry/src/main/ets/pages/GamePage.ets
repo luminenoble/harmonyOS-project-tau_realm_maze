@@ -43,6 +43,8 @@ struct GamePage {
   // 触摸按下坐标（区分点击 / 滑动）
   private touchDownX: number = 0;
   private touchDownY: number = 0;
+  // 持有标签上次内容指纹（仅内容变化才重建数组，避免每帧重渲 HoldingBar）
+  private lastHeldKey: string = '';
 
   // HUD 状态
   @State currentLayer: number = 0;
@@ -146,7 +148,7 @@ struct GamePage {
     });
   }
 
-  // 从引擎同步状态到 @State；force=true 时全量刷新
+  // 从引擎同步状态到 @State；逐字段「变化才写」，避免动画期间每帧重渲整个 HUD（卡顿根因）
   private syncFromEngine(force: boolean): void {
     if (this.engine === null) {
       return;
@@ -154,24 +156,69 @@ struct GamePage {
     const e: GameEngine = this.engine as GameEngine;
     if (force || this.currentLayer !== e.currentLayer) {
       this.currentLayer = e.currentLayer;
+    }
+    if (this.currentFragments !== e.currentFragments) {
       this.currentFragments = e.currentFragments;
+    }
+    if (this.currentFragmentTotal !== e.currentFragmentTotal) {
       this.currentFragmentTotal = e.currentFragmentTotal;
     }
-    this.stepsUntilRestructure = e.stepsUntilRestructure;
-    this.currentHeat = e.currentHeat;
-    this.heatMax = e.currentHeatMax;
-    this.tau = e.tau;
-    this.totalPicked = e.totalFragmentsPicked;
-    this.totalAll = e.totalFragmentsAll;
-    this.optimalTau = e.optimalTau;
-    this.canInteract = e.canInteract;
-    this.interactHint = e.interactHint;
-    // 指令状态：持有条 / 进度 / CPI（每 tick 用新数组触发刷新）
-    this.heldLabels = e.heldLabels;
-    this.executedCount = e.executedCount;
-    this.cpi = e.cpi;
-    this.progressText = e.executedCount + ' / ' + e.totalInstr;
-    this.nextInstr = this.computeNextInstr(e.executedCount);
+    const sur: number = e.stepsUntilRestructure;
+    if (this.stepsUntilRestructure !== sur) {
+      this.stepsUntilRestructure = sur;
+    }
+    const heat: number = e.currentHeat;
+    if (this.currentHeat !== heat) {
+      this.currentHeat = heat;
+    }
+    if (this.heatMax !== e.currentHeatMax) {
+      this.heatMax = e.currentHeatMax;
+    }
+    const tauV: number = e.tau;
+    if (this.tau !== tauV) {
+      this.tau = tauV;
+    }
+    const tp: number = e.totalFragmentsPicked;
+    if (this.totalPicked !== tp) {
+      this.totalPicked = tp;
+    }
+    if (this.totalAll !== e.totalFragmentsAll) {
+      this.totalAll = e.totalFragmentsAll;
+    }
+    const ot: number = e.optimalTau;
+    if (this.optimalTau !== ot) {
+      this.optimalTau = ot;
+    }
+    const ci: boolean = e.canInteract;
+    if (this.canInteract !== ci) {
+      this.canInteract = ci;
+    }
+    const ih: string = e.interactHint;
+    if (this.interactHint !== ih) {
+      this.interactHint = ih;
+    }
+    const ec: number = e.executedCount;
+    if (this.executedCount !== ec) {
+      this.executedCount = ec;
+    }
+    const cpiV: number = e.cpi;
+    if (this.cpi !== cpiV) {
+      this.cpi = cpiV;
+    }
+    const pt: string = ec + ' / ' + e.totalInstr;
+    if (this.progressText !== pt) {
+      this.progressText = pt;
+    }
+    const ni: string = this.computeNextInstr(ec);
+    if (this.nextInstr !== ni) {
+      this.nextInstr = ni;
+    }
+    // 持有标签：内容变化才重建数组（每帧 new 数组会触发 HoldingBar 全量重渲）
+    const key: string = e.heldLabels.join(',');
+    if (this.lastHeldKey !== key) {
+      this.lastHeldKey = key;
+      this.heldLabels = e.heldLabels;
+    }
   }
 
   // 下一条待执行指令文案（按程序顺序近似取第 executedCount 条）

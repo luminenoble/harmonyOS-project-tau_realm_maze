@@ -592,11 +592,14 @@ export class GameEngine {
         this.transitionT = 1;
         // 黑屏瞬间换层：强制弹层 vs VIA 主动切层两支
         if (this._forcedPop) {
-          // 离开层热量清零（玩家"凉下来"才能再回）；落到下层 (1,1) 起点
+          // 离开层热量清零（玩家"凉下来"才能再回）；
+          // 落到下层「与当前位置最近的 FLOOR」而非 (1,1)，避免被强制弹层一路打回起点
+          const lower: number = this._currentLayer - 1;
+          const safe: number[] = this.findNearestFloor(lower, this.player.col, this.player.row);
           this._heat.reset(this._currentLayer);
-          this._currentLayer -= 1;
-          this.player.col = 1;
-          this.player.row = 1;
+          this._currentLayer = lower;
+          this.player.col = safe[0];
+          this.player.row = safe[1];
           this._forcedPop = false;
         } else {
           const tile: Tile | undefined = this.map.getTile(
@@ -825,6 +828,27 @@ export class GameEngine {
     );
     this._lastOpened = result.opened;
     this._lastClosed = result.closed;
+  }
+
+  // 强制弹层落点：在目标层找「与 (c0,r0) 曼哈顿距离最近的 FLOOR」cell
+  // 保证落在可站立地板（不落 WALL / 锁定 GATE / 特殊瓦片）；(1,1) 始终为 FLOOR 作兜底
+  private findNearestFloor(layer: number, c0: number, r0: number): number[] {
+    let best: number[] = [1, 1];
+    let bestD: number = 1e9;
+    for (let r = 0; r < this.map.rows; r++) {
+      for (let c = 0; c < this.map.cols; c++) {
+        const tile: Tile | undefined = this.map.getTile(c, r, layer);
+        if (tile === undefined || tile.type !== TileType.FLOOR) {
+          continue;
+        }
+        const d: number = Math.abs(c - c0) + Math.abs(r - r0);
+        if (d < bestD) {
+          bestD = d;
+          best = [c, r];
+        }
+      }
+    }
+    return best;
   }
 
   // Day 7：扫描全层热量，更新峰值；构造期与每步升温后调用
