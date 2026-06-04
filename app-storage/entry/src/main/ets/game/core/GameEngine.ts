@@ -487,7 +487,10 @@ export class GameEngine {
       return false;
     }
     if (tile.type === TileType.VIA && tile.viaTarget >= 0) {
-      return ViaUnlock.canTrigger(tile, this._currentLayer, this._fragments[this._currentLayer]);
+      return ViaUnlock.canTrigger(
+        tile, this._currentLayer, this._fragments[this._currentLayer],
+        this._fragmentTotals[this._currentLayer]
+      );
     }
     // EXIT 始终可"尝试"激活：碎片不足时按下给提示
     if (tile.type === TileType.EXIT) {
@@ -527,7 +530,10 @@ export class GameEngine {
 
     // VIA：已解锁 → 累计 tier 使用 + τ 延迟，进 VIA_WAIT
     if (tile.type === TileType.VIA && tile.viaTarget >= 0) {
-      if (!ViaUnlock.canTrigger(tile, this._currentLayer, this._fragments[this._currentLayer])) {
+      if (!ViaUnlock.canTrigger(
+        tile, this._currentLayer, this._fragments[this._currentLayer],
+        this._fragmentTotals[this._currentLayer]
+      )) {
         return false;
       }
       const tier: number = tile.viaTier;
@@ -659,9 +665,9 @@ export class GameEngine {
       this._fragments[this._currentLayer]++;
       this._pickedCount++;
       const count: number = this._fragments[this._currentLayer];
-      // ALU 门按持有操作数解锁；上行 VIA 仍按本层碎片全收集解锁
+      // ALU 门按持有操作数解锁；上行 VIA 按本层碎片全收集解锁（阈值=本层碎片总数，随难度变化）
       GateLogic.unlockAllInLayer(this.map, this._currentLayer, this.player.heldOperands.length);
-      ViaUnlock.unlockAllInLayer(this.map, this._currentLayer, count);
+      ViaUnlock.unlockAllInLayer(this.map, this._currentLayer, count, this._fragmentTotals[this._currentLayer]);
       this.onFragmentPicked(this.loadFactText(label, kind));
       this.phase = EnginePhase.IDLE;
       if (this.maybeForcePop()) {

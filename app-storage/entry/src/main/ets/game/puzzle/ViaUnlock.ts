@@ -19,12 +19,16 @@ export enum ViaTier {
 const VIA_DELAYS: number[] = [1, 3, 6];
 
 export class ViaUnlock {
-  // 上行 VIA 解锁所需碎片数（MVP：3，与每层碎片总数对齐 = 全收集）
+  // 上行 VIA 解锁所需碎片数默认值（与旧版 3 碎片/层对齐）
+  // 指令重构后每层碎片数随难度变化（2/3/4），调用方应传 requiredCount = 本层碎片总数
   static readonly UP_THRESHOLD: number = 3;
 
   // 玩家落点 VIA 时调用：返回是否触发切层
-  // 已解锁（locked = false）一律可触发
-  static canTrigger(tile: Tile, currentLayer: number, fragmentCount: number): boolean {
+  // 已解锁（locked = false）一律可触发；requiredCount 为本层解锁所需碎片数
+  static canTrigger(
+    tile: Tile, currentLayer: number, fragmentCount: number,
+    requiredCount: number = ViaUnlock.UP_THRESHOLD
+  ): boolean {
     if (tile.type !== TileType.VIA) {
       return false;
     }
@@ -36,12 +40,15 @@ export class ViaUnlock {
     if (tile.viaTarget <= currentLayer) {
       return true;
     }
-    return fragmentCount >= ViaUnlock.UP_THRESHOLD;
+    return fragmentCount >= requiredCount;
   }
 
-  // 扫描指定层所有上行 VIA，符合阈值则解锁
-  static unlockAllInLayer(map: MapManager, layer: number, fragmentCount: number): void {
-    if (fragmentCount < ViaUnlock.UP_THRESHOLD) {
+  // 扫描指定层所有上行 VIA，达到 requiredCount（本层碎片全收集）则解锁
+  static unlockAllInLayer(
+    map: MapManager, layer: number, fragmentCount: number,
+    requiredCount: number = ViaUnlock.UP_THRESHOLD
+  ): void {
+    if (fragmentCount < requiredCount) {
       return;
     }
     map.forEach((tile: Tile, col: number, row: number) => {
