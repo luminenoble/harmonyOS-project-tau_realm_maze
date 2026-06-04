@@ -22,6 +22,10 @@ interface ResultParams {
   optimalSteps: number;
   optimalViaTiers: number[];
   playerViaTiers: number[];
+  // 指令重构新增
+  totalInstr: number;
+  instrType: string;
+  hazards: number;
 }
 
 @Entry
@@ -40,6 +44,10 @@ struct ResultPage {
   @State optimalSteps: number = 0;
   @State optimalViaTiers: number[] = [];
   @State playerViaTiers: number[] = [];
+  // 指令重构：总指令数（CPI 分母）/ 运算场景 / RAW 触发数
+  @State totalInstr: number = 1;
+  @State instrType: string = '机器指令执行';
+  @State hazards: number = 0;
   // Day 8：AI 评语；加载中显示占位文案，getAIComment resolve 后切到正文
   @State aiComment: string = '正在分析指令执行...';
   // 是否已保存到数据库（避免重复写入）
@@ -73,7 +81,17 @@ struct ResultPage {
     if (p.playerViaTiers !== undefined && p.playerViaTiers !== null) {
       this.playerViaTiers = p.playerViaTiers;
     }
-    // Day 8：异步取 AI 评语（演示版 Promise.resolve 立即完成）
+    // 指令重构字段（totalInstr 兜底 ≥1 防 CPI 除零）
+    if (p.totalInstr !== undefined && p.totalInstr !== null && p.totalInstr > 0) {
+      this.totalInstr = p.totalInstr;
+    }
+    if (p.instrType !== undefined && p.instrType !== null && p.instrType.length > 0) {
+      this.instrType = p.instrType;
+    }
+    if (p.hazards !== undefined && p.hazards !== null) {
+      this.hazards = p.hazards;
+    }
+    // Day 8：异步取 AI 评语
     this.loadAIComment();
   }
 
@@ -91,7 +109,10 @@ struct ResultPage {
       optimalTau: this.optimalTau,
       optimalSteps: this.optimalSteps,
       optimalViaTiers: this.optimalViaTiers,
-      playerViaTiers: this.playerViaTiers
+      playerViaTiers: this.playerViaTiers,
+      totalInstr: this.totalInstr,
+      instrType: this.instrType,
+      hazards: this.hazards
     };
     getAIComment(stats)
       .then((text: string) => {
@@ -121,19 +142,19 @@ struct ResultPage {
       await insertGameRecord(
         uid, this.steps, this.tauVia, this.tau,
         this.rating(), this.l1, this.l2, this.mem,
-        this.heatPeak, comment
+        this.heatPeak, comment, this.instrType
       );
     } catch (_e) {
       // 存储失败静默处理，不影响结算展示
     }
   }
 
-  // CPI = 玩家 τ / 理论最优 τ（1.0 = 完美）；optimalTau 已兜底 ≥1
+  // CPI = (步数 + VIA延迟) / 总指令数（new-design 第七节）；totalInstr 已兜底 ≥1
   private cpi(): number {
-    if (this.optimalTau <= 0) {
+    if (this.totalInstr <= 0) {
       return this.tau;
     }
-    return this.tau / this.optimalTau;
+    return (this.steps + this.tauVia) / this.totalInstr;
   }
 
   // CPI 评级：S ≤1.2 / A ≤2.0 / B ≤4.0 / C
@@ -187,7 +208,7 @@ struct ResultPage {
         .fontSize(20)
         .fontColor('#88a0b8')
         .margin({ bottom: 4 })
-      Text('LOAD R1, [addr] · 取指→译码→执行→访存→写回')
+      Text(this.instrType + ' · ' + this.totalInstr + ' 条指令 · 取指→译码→执行→访存→写回')
         .fontSize(11)
         .fontColor('#5a7088')
         .margin({ bottom: 18 })
@@ -203,17 +224,16 @@ struct ResultPage {
         .fontColor(this.ratingColor())
         .margin({ bottom: 16 })
 
-      // CPI 核心指标（= 实际 τ / 理论最优 τ）
+      // CPI 核心指标（= (步数 + 缓存延迟) / 总指令数）
       Text('CPI = ' + this.cpi().toFixed(2))
         .fontSize(28)
         .fontColor('#e8f4ff')
         .margin({ bottom: 4 })
-      Text('实际 τ ' + this.tau + '  ·  理论最优 ' + this.optimalTau + ' cycles')
+      Text('(步数 ' + this.steps + ' + 缓存延迟 ' + this.tauVia + ') / ' + this.totalInstr + ' 指令')
         .fontSize(13)
         .fontColor('#5a7088')
         .margin({ bottom: 2 })
-      Text('步数 ' + this.steps + ' + 缓存延迟 ' + this.tauVia
-          + '   (最优步数 ' + this.optimalSteps + ')')
+      Text('总周期 τ ' + this.tau + ' cycles · RAW 冒险 ' + this.hazards + ' 次 · 理论最优步数 ' + this.optimalSteps)
         .fontSize(12)
         .fontColor('#5a7088')
         .margin({ bottom: 18 })
@@ -379,7 +399,8 @@ struct ResultPage {
           .height(40)
           .width(140)
           .onClick(() => {
-            router.replaceUrl({ url: 'pages/GamePage' });
+            // 重新选难度 → 生成新指令序列
+            router.replaceUrl({ url: 'pages/DifficultyPage' });
           })
         Button('返回主菜单')
           .fontSize(14)

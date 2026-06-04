@@ -33,6 +33,7 @@ export interface GameRecord {
   memCount: number;
   heatPeak: number[];
   aiComment: string;
+  instrType: string;     // 指令重构新增：本局运算场景（如 "1×2 向量内积"）
   playedAt: number;
 }
 
@@ -109,8 +110,16 @@ export async function initDb(context: Context): Promise<void> {
     'mem_count INTEGER, ' +
     'heat_peak TEXT, ' +
     'ai_comment TEXT, ' +
+    'instr_type TEXT, ' +
     'played_at INTEGER)'
   );
+
+  // 旧库升级：补 instr_type 列（已存在则忽略报错）
+  try {
+    await rdbStore.executeSql('ALTER TABLE game_records ADD COLUMN instr_type TEXT');
+  } catch (_e) {
+    // duplicate column → 已是新结构，忽略
+  }
 }
 
 // 获取 store 实例（必须先 initDb）
@@ -203,7 +212,7 @@ function parseUserRow(rs: relationalStore.ResultSet): UserRecord {
 export async function insertGameRecord(
   userId: number, steps: number, tauVia: number, tau: number,
   rating: string, l1: number, l2: number, mem: number,
-  heatPeak: number[], aiComment: string
+  heatPeak: number[], aiComment: string, instrType: string = ''
 ): Promise<number> {
   const bucket: relationalStore.ValuesBucket = {
     user_id: userId,
@@ -216,6 +225,7 @@ export async function insertGameRecord(
     mem_count: mem,
     heat_peak: JSON.stringify(heatPeak),
     ai_comment: aiComment,
+    instr_type: instrType,
     played_at: Date.now()
   };
   return await getStore().insert('game_records', bucket);
@@ -244,7 +254,7 @@ export async function queryGameRecords(userId: number, filter?: RecordFilter): P
 
   const result = await getStore().query(predicates,
     ['id', 'user_id', 'steps', 'tau_via', 'tau', 'rating',
-      'l1_count', 'l2_count', 'mem_count', 'heat_peak', 'ai_comment', 'played_at']);
+      'l1_count', 'l2_count', 'mem_count', 'heat_peak', 'ai_comment', 'instr_type', 'played_at']);
 
   const records: GameRecord[] = [];
   if (result.goToFirstRow()) {
@@ -312,8 +322,22 @@ function parseRecordRow(rs: relationalStore.ResultSet): GameRecord {
     memCount: rs.getLong(rs.getColumnIndex('mem_count')),
     heatPeak: heatPeak,
     aiComment: rs.getString(rs.getColumnIndex('ai_comment')),
+    instrType: parseInstrType(rs),
     playedAt: rs.getLong(rs.getColumnIndex('played_at'))
   };
+}
+
+// 兜底读取 instr_type（旧记录该列可能为 NULL）
+function parseInstrType(rs: relationalStore.ResultSet): string {
+  try {
+    const idx: number = rs.getColumnIndex('instr_type');
+    if (idx < 0) {
+      return '';
+    }
+    return rs.getString(idx);
+  } catch (_e) {
+    return '';
+  }
 }
 
 // 时间范围 → 截止时间戳

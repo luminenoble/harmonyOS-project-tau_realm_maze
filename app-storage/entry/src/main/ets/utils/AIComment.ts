@@ -16,10 +16,14 @@ export interface AIPromptStats {
   mem: number;            // DRAM 访问次数
   heatPeak: number[];     // 各层热量峰值
   rating: string;         // CPI 评级 S/A/B/C
-  optimalTau: number;     // 理论最优 τ（CPI 分母）
+  optimalTau: number;     // 理论最优 τ（绕路分析参考）
   optimalSteps: number;   // 理论最优步数
   optimalViaTiers: number[];  // 最优各层应选 tier
   playerViaTiers: number[];   // 玩家各层实际选用 tier（时序）
+  // 指令重构新增：CPI = (steps + tauVia) / totalInstr
+  totalInstr: number;     // 总指令数（CPI 分母）
+  instrType: string;      // 运算场景描述
+  hazards: number;        // RAW 数据冒险触发次数
 }
 
 // DeepSeek Chat Completions 请求体（OpenAI 兼容）
@@ -64,12 +68,12 @@ function formatTierSeq(tiers: number[]): string {
   return s;
 }
 
-// CPI = 玩家 τ / 理论最优 τ
+// CPI = (步数 + VIA延迟) / 总指令数（new-design 第七节）
 function calcCpi(stats: AIPromptStats): number {
-  if (stats.optimalTau <= 0) {
+  if (stats.totalInstr <= 0) {
     return stats.tau;
   }
-  return stats.tau / stats.optimalTau;
+  return (stats.steps + stats.tauVia) / stats.totalInstr;
 }
 
 // 构造发给 DeepSeek 的 prompt：机器指令 / 流水线视角 + 最优对照差值
@@ -80,16 +84,16 @@ export function buildAIPrompt(stats: AIPromptStats): string {
   }).join('、');
 
   return [
-    '你是一位资深 CPU 微架构工程师。下面是一条机器指令（LOAD R1,[addr]）在三级存储层级',
-    '（Register File / L1-L2 Cache / Memory Bus）中完成执行的走线数据，',
-    '请以流水线 / CPI 视角给出 3 行以内、不超过 90 字的中文点评：',
-    '- CPI = ' + cpi.toFixed(2) + '（实际 τ ' + stats.tau + ' cycles / 理论最优 ' + stats.optimalTau + ' cycles）',
-    '- 步数：实际 ' + stats.steps + ' / 最优 ' + stats.optimalSteps,
-    '- 缓存命中选择：实际 [' + formatTierSeq(stats.playerViaTiers) + ']  vs  最优 [' + formatTierSeq(stats.optimalViaTiers) + ']',
-    '- 命中统计：L1$×' + stats.l1 + ' / L2$×' + stats.l2 + ' / DRAM×' + stats.mem,
+    '你是一位资深 CPU 微架构工程师，正在 review 一段指令序列的执行轨迹。',
+    '请以流水线 / CPI 视角给出 3 行以内、不超过 90 字的中文点评并附一条优化建议：',
+    '- 指令类型：' + stats.instrType + '（共 ' + stats.totalInstr + ' 条指令）',
+    '- CPI = ' + cpi.toFixed(2) + '（(步数 ' + stats.steps + ' + 缓存延迟 ' + stats.tauVia + ') / 指令数 ' + stats.totalInstr + '）',
+    '- 缓存命中：L1$×' + stats.l1 + ' / L2$×' + stats.l2 + ' / DRAM×' + stats.mem,
+    '- 缓存层级选择：实际 [' + formatTierSeq(stats.playerViaTiers) + ']  vs  最优 [' + formatTierSeq(stats.optimalViaTiers) + ']',
+    '- 数据冒险（RAW）触发：' + stats.hazards + ' 次',
     '- 各层热量峰值：' + heatStr,
     '- 评级：' + stats.rating,
-    '关注：缓存层级选择是否最优、步数差是否说明绕路、热管理是否拖累 CPI。语气专业犀利、鼓励改进。'
+    '关注：缓存层级选择是否最优、RAW 冒险是否拖慢流水线、热管理是否拉高 CPI。语气专业犀利、鼓励改进。'
   ].join('\n');
 }
 
@@ -175,6 +179,11 @@ function generatePlaceholderComment(stats: AIPromptStats): string {
   if (stats.optimalSteps > 0 && stats.steps >= stats.optimalSteps + 20) {
     const extra: number = stats.steps - stats.optimalSteps;
     lines.push('走线步数 ' + stats.steps + '，比最优多绕 ' + extra + ' 步；下次可在 L1/L2 Cache 层寻找横向直达通道。');
+  }
+
+  // 5) 数据冒险观察（触发 RAW 时输出）
+  if (stats.hazards > 0) {
+    lines.push('触发 ' + stats.hazards + ' 次 RAW 数据冒险，寄存器被迫重载；规划路径时尽量绕开冒险格以减少流水线气泡。');
   }
 
   return lines.join('\n');

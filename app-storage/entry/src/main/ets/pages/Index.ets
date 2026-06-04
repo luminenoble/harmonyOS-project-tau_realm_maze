@@ -142,7 +142,7 @@ struct Index {
           .textAlign(TextAlign.Center)
           .margin({ bottom: 48 })
 
-        // 进入游戏
+        // 进入游戏：先选难度 → 加载指令序列 → 进入地图
         Button('进入芯片世界')
           .fontSize(16)
           .fontColor('#0a0e1a')
@@ -150,7 +150,7 @@ struct Index {
           .width(200)
           .height(44)
           .onClick(() => {
-            router.pushUrl({ url: 'pages/GamePage' });
+            router.pushUrl({ url: 'pages/DifficultyPage' });
           })
           .margin({ bottom: 16 })
 

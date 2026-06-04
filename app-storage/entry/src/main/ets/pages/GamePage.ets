@@ -1,189 +1,209 @@
 // 游戏主页面：平板专用横屏布局
-// 左侧固定宽度信息栏（返回 / 标题 / Layer / 碎片 / 重生）
-// 右侧 Stack：Canvas 全屏铺底 + 右下角浮动 D-Pad
-// Day 4：3 层迷宫 + Via 切层；Day 5：碎片拾取 / 逻辑门 / 科普 Dialog；Day 5 末：平板专用排版
+// 左侧固定信息栏（返回 / 层 / 操作数 / 热量 / CPI / 重生）
+// 右侧 Stack：Canvas 全屏 + 顶部持有条 + 右下 D-Pad + 点击信息面板 + 指令抽屉
+// 指令重构：从 ProgramStore 读取本局指令序列构建地图；CPI=(步数+延迟)/指令数
 import { router } from '@kit.ArkUI';
-import { IsoConfig } from '../utils/IsoMath';
+import { IsoConfig, screenToGrid, GridPoint } from '../utils/IsoMath';
 import { drawMap, drawRestructurePulse, drawInteractHighlight } from '../game/render/IsoRenderer';
 import { drawFade, drawWarningOverlay, drawViaProgressBar, drawShutterFold } from '../game/render/UIOverlay';
 import { MapManager } from '../game/core/MapManager';
 import { GameEngine, VictoryStats } from '../game/core/GameEngine';
 import { MusicPanel } from '../components/MusicPanel';
-import { layerName, tierShort } from '../game/data/Semantics';
+import { HoldingBar } from '../components/HoldingBar';
+import { InfoPanel } from '../components/InfoPanel';
+import { InstructionDrawer } from '../components/InstructionDrawer';
+import { layerName, tierShort, tierCacheName } from '../game/data/Semantics';
+import {
+  InstructionProgram, Instruction, difficultyConfig,
+  aluOpName, fragmentKindName
+} from '../game/data/Instruction';
+import { ProgramPlan } from '../utils/InstructionGraph';
+import { getProgram, getPlan } from '../utils/ProgramStore';
+import { Tile, TileType } from '../game/types/TileType';
 
 @Entry
 @Component
 struct GamePage {
-  // Canvas 2D 上下文，启用抗锯齿（true）
   private settings: RenderingContextSettings = new RenderingContextSettings(true);
   private ctx: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings);
 
-  // Day 2 MVP 参数：13×13 厚墙迷宫（逻辑 6×6 cell）
-  private readonly GRID_COLS: number = 13;
-  private readonly GRID_ROWS: number = 13;
+  // new-design 8.1：网格升到 19×19（逻辑 9×9 cell）
+  private readonly GRID_COLS: number = 19;
+  private readonly GRID_ROWS: number = 19;
   private readonly BG_COLOR: string = '#0a0e1a';
-  // 左侧 HUD 栏背景色（略亮于主背景，分隔出"控制台"质感）
   private readonly SIDEBAR_BG: string = '#0d1424';
-
-  // 多层堆叠预留：Day 4 实际启用 3 层，layout 锚定与之一致
   private readonly TARGET_LAYERS: number = 3;
-
-  // 滑动判定阈值（px），太小会误触
   private readonly SWIPE_THRESHOLD: number = 24;
 
-  // 引擎实例：aboutToAppear 构造，aboutToDisappear 停机
   private engine: GameEngine | null = null;
+  // 本局指令程序（来自 ProgramStore；可能为 null → 引擎用碎片数兜底）
+  private program: InstructionProgram | null = null;
+  // 最近一帧的等距参数（点击命中测试复用）
+  private lastCfg: IsoConfig | null = null;
+  // 触摸按下坐标（区分点击 / 滑动）
+  private touchDownX: number = 0;
+  private touchDownY: number = 0;
 
-  // HUD 显示状态；tick 回调内同步以触发 ArkUI 文本刷新
+  // HUD 状态
   @State currentLayer: number = 0;
   @State currentFragments: number = 0;
   @State currentFragmentTotal: number = 0;
-  // 距下一次动态重构剩余步数（Day 6）
   @State stepsUntilRestructure: number = 20;
-  // 当前层热量（Day 6 散热）
   @State currentHeat: number = 0;
   @State heatMax: number = 100;
-  // Day 7：τ 仪表 + 跨层碎片总数（用于 HUD 全局进度提示）
   @State tau: number = 0;
   @State totalPicked: number = 0;
   @State totalAll: number = 0;
-  // score-algorithm：理论最优 τ（CPI 基准，全程不变）；当前落点交互态
-  @State optimalTau: number = 1;
   @State canInteract: boolean = false;
   @State interactHint: string = '';
 
-  // 页面入场：构造引擎与地图
+  // 指令重构 HUD
+  @State heldLabels: string[] = [];
+  @State nextInstr: string = '';
+  @State progressText: string = '0 / 0';
+  @State cpi: number = 0;
+  @State executedCount: number = 0;
+  @State instrType: string = '';
+  @State fromFallback: boolean = false;
+  @State instructions: Instruction[] = [];
+
+  // 面板可见性 + 信息卡内容
+  @State showDrawer: boolean = false;
+  @State showInfo: boolean = false;
+  @State infoTitle: string = '';
+  @State infoBody: string = '';
+  @State infoAccent: string = '#22d3a8';
+
   aboutToAppear(): void {
+    this.program = getProgram();
     this.initEngine();
   }
 
-  // 页面退出：停 timer 防止泄漏
   aboutToDisappear(): void {
     if (this.engine !== null) {
       this.engine.stop();
     }
   }
 
-  // 抽出引擎构造，aboutToAppear 与"↻ 重生"复用
+  // 构造引擎与地图（aboutToAppear 与"重生"复用）
   private initEngine(): void {
     if (this.engine !== null) {
       this.engine.stop();
     }
-    const map: MapManager = new MapManager(this.GRID_COLS, this.GRID_ROWS, this.TARGET_LAYERS);
-    this.engine = new GameEngine(map, null, 1, 1);
-    this.currentLayer = 0;
-    this.currentFragments = this.engine.currentFragments;
-    this.currentFragmentTotal = this.engine.currentFragmentTotal;
-    this.stepsUntilRestructure = this.engine.stepsUntilRestructure;
-    this.currentHeat = this.engine.currentHeat;
-    this.heatMax = this.engine.currentHeatMax;
-    this.tau = this.engine.tau;
-    this.totalPicked = this.engine.totalFragmentsPicked;
-    this.totalAll = this.engine.totalFragmentsAll;
-    this.optimalTau = this.engine.optimalTau;
-    this.canInteract = this.engine.canInteract;
-    this.interactHint = this.engine.interactHint;
-    this.engine.setTickCallback(() => {
-      const e: GameEngine = this.engine as GameEngine;
-      // 转场 swap 后同步层号与本层碎片计数到 ArkUI（强制弹层与 VIA 切层都走这里）
-      if (this.currentLayer !== e.currentLayer) {
-        this.currentLayer = e.currentLayer;
-        this.currentFragments = e.currentFragments;
-        this.currentFragmentTotal = e.currentFragmentTotal;
-      }
-      // 重构倒计时随每次 tick 同步
-      const newRemain: number = e.stepsUntilRestructure;
-      if (this.stepsUntilRestructure !== newRemain) {
-        this.stepsUntilRestructure = newRemain;
-      }
-      // 热量同步（每次 tick 都比较，过热与切层都会变化）
-      const newHeat: number = e.currentHeat;
-      if (this.currentHeat !== newHeat) {
-        this.currentHeat = newHeat;
-      }
-      // Day 7：τ 仪表 + 全局碎片进度
-      const newTau: number = e.tau;
-      if (this.tau !== newTau) {
-        this.tau = newTau;
-      }
-      const newPicked: number = e.totalFragmentsPicked;
-      if (this.totalPicked !== newPicked) {
-        this.totalPicked = newPicked;
-      }
-      // score-algorithm：落点交互态同步（点亮/熄灭 EXEC 按钮）
-      const ci: boolean = e.canInteract;
-      if (this.canInteract !== ci) {
-        this.canInteract = ci;
-      }
-      const ih: string = e.interactHint;
-      if (this.interactHint !== ih) {
-        this.interactHint = ih;
-      }
+    const plan: ProgramPlan | null = getPlan();
+    // 难度化每层碎片数（无程序则默认 3）
+    const fragPerLayer: number = this.program !== null
+      ? difficultyConfig(this.program.difficulty).fragmentsPerLayer : 3;
+
+    const map: MapManager = new MapManager(
+      this.GRID_COLS, this.GRID_ROWS, this.TARGET_LAYERS, undefined,
+      plan, fragPerLayer, 1
+    );
+    this.engine = new GameEngine(map, this.program, 1, 1);
+
+    // 指令序列展示数据
+    this.instructions = this.program !== null ? this.program.instructions : [];
+    this.instrType = this.program !== null ? this.program.instrType : '机器指令执行';
+    this.fromFallback = this.program !== null ? this.program.fromFallback : false;
+
+    this.syncFromEngine(true);
+
+    const e: GameEngine = this.engine as GameEngine;
+    e.setTickCallback(() => {
+      this.syncFromEngine(false);
       this.renderMap();
     });
-    this.engine.setFragmentPickedCallback((factText: string) => {
-      const e: GameEngine = this.engine as GameEngine;
-      this.currentFragments = e.currentFragments;
-      this.currentFragmentTotal = e.currentFragmentTotal;
-      this.totalPicked = e.totalFragmentsPicked;
+    e.setFragmentPickedCallback((factText: string) => {
+      this.syncFromEngine(false);
       AlertDialog.show({
-        title: 'LOAD 操作数 +1',
+        title: '指令执行',
         message: factText,
         autoCancel: true,
-        confirm: {
-          value: '继续',
-          action: () => {}
-        }
+        confirm: { value: '继续', action: () => {} }
       });
     });
-    // Day 7：EXIT 落点但条件不足时的提示
-    this.engine.setExitHintCallback((hint: string) => {
+    e.setExitHintCallback((hint: string) => {
       AlertDialog.show({
         title: '终点未就绪',
         message: hint,
         autoCancel: true,
-        confirm: {
-          value: '继续探索',
-          action: () => {}
-        }
+        confirm: { value: '继续探索', action: () => {} }
       });
     });
-    // Day 7：通关回调，路由跳 ResultPage
-    this.engine.setVictoryCallback((stats: VictoryStats) => {
-      router.replaceUrl({
-        url: 'pages/ResultPage',
-        params: stats
+    e.setHazardCallback((hint: string) => {
+      this.syncFromEngine(false);
+      AlertDialog.show({
+        title: 'RAW 数据冒险',
+        message: hint,
+        autoCancel: true,
+        confirm: { value: '重新装载', action: () => {} }
       });
+    });
+    e.setVictoryCallback((stats: VictoryStats) => {
+      router.replaceUrl({ url: 'pages/ResultPage', params: stats });
     });
   }
 
-  // 渲染入口：清屏 → 自适应瓦片尺寸 → painter's 顺序绘制 → 转场覆盖
-  // Canvas 区域已是"右侧无侧栏"的纯游戏区，halfW 上限放宽到 40 以利大屏
+  // 从引擎同步状态到 @State；force=true 时全量刷新
+  private syncFromEngine(force: boolean): void {
+    if (this.engine === null) {
+      return;
+    }
+    const e: GameEngine = this.engine as GameEngine;
+    if (force || this.currentLayer !== e.currentLayer) {
+      this.currentLayer = e.currentLayer;
+      this.currentFragments = e.currentFragments;
+      this.currentFragmentTotal = e.currentFragmentTotal;
+    }
+    this.stepsUntilRestructure = e.stepsUntilRestructure;
+    this.currentHeat = e.currentHeat;
+    this.heatMax = e.currentHeatMax;
+    this.tau = e.tau;
+    this.totalPicked = e.totalFragmentsPicked;
+    this.totalAll = e.totalFragmentsAll;
+    this.canInteract = e.canInteract;
+    this.interactHint = e.interactHint;
+    // 指令状态：持有条 / 进度 / CPI（每 tick 用新数组触发刷新）
+    this.heldLabels = e.heldLabels;
+    this.executedCount = e.executedCount;
+    this.cpi = e.cpi;
+    this.progressText = e.executedCount + ' / ' + e.totalInstr;
+    this.nextInstr = this.computeNextInstr(e.executedCount);
+  }
+
+  // 下一条待执行指令文案（按程序顺序近似取第 executedCount 条）
+  private computeNextInstr(executed: number): string {
+    if (this.instructions.length === 0) {
+      return '';
+    }
+    const idx: number = executed < this.instructions.length ? executed : this.instructions.length - 1;
+    const ins: Instruction = this.instructions[idx];
+    return ins.mnemonic + ' ' + ins.operands;
+  }
+
+  // 渲染入口
   private renderMap(): void {
     const w: number = this.ctx.width;
     const h: number = this.ctx.height;
 
-    // 防御性重置 ctx 状态：HarmonyOS Canvas 的 globalAlpha 在 save/restore 上行为不稳，
-    // 强制每帧入口锁回 1，避免上一帧 fade 半透明残留导致清屏不彻底
     this.ctx.globalAlpha = 1;
     this.ctx.clearRect(0, 0, w, h);
     this.ctx.fillStyle = this.BG_COLOR;
     this.ctx.fillRect(0, 0, w, h);
 
-    // 自适应瓦片半宽：上限 40 vp（平板大屏视觉更舒展），下限 8 vp 防小窗压扁
+    // 自适应瓦片半宽：19×19 更大，上限降到 28 vp 以容纳全图
     const maxHalfW: number = Math.floor((w - 40) / (this.GRID_COLS + this.GRID_ROWS));
-    const halfW: number = Math.min(40, Math.max(8, maxHalfW));
+    const halfW: number = Math.min(28, Math.max(6, maxHalfW));
     const halfH: number = Math.floor(halfW / 2);
-    // 墙高降到 0.45 倍瓦片半宽，露出后排路面，仍保留立体感
     const wallH: number = Math.max(4, Math.floor(halfW * 0.45));
 
-    // 垂直居中（按 TARGET_LAYERS 计算理论占用高度）
     const contentH: number = this.TARGET_LAYERS * wallH + (this.GRID_COLS + this.GRID_ROWS) * halfH;
     const topMargin: number = Math.max(0, (h - contentH) / 2);
     const originX: number = w / 2;
     const originY: number = topMargin + this.TARGET_LAYERS * wallH + halfH;
 
     const cfg: IsoConfig = new IsoConfig(halfW, halfH, -wallH, originX, originY);
+    this.lastCfg = cfg;
 
     if (this.engine === null) {
       return;
@@ -191,32 +211,20 @@ struct GamePage {
     const e: GameEngine = this.engine as GameEngine;
 
     drawMap(this.ctx, e.map, cfg, wallH, e.currentLayer, e.player, wallH * 0.6);
-
-    // Day 6 PULSE：opened / closed 改动 cell 高亮（仅 PULSE 阶段 alpha>0）
     drawRestructurePulse(
       this.ctx, cfg, e.currentLayer,
       e.lastOpenedCells, e.lastClosedCells, e.pulseAlpha, wallH
     );
-
-    // score-algorithm：落点可激活时画金色脉冲描边，提示按 EXEC
     if (e.canInteract) {
       drawInteractHighlight(
         this.ctx, cfg, e.currentLayer, e.player.col, e.player.row,
         (Date.now() % 1600) / 1600
       );
     }
-
-    // 平板布局把 HUD 全部移到左侧 Column，Canvas 上不再叠 label / badge
-
-    // Day 6 WARN：红色脉冲底 + "信号重路由中..."（仅 WARN 阶段 alpha>0）
     drawWarningOverlay(this.ctx, w, h, e.warnPulseAlpha);
-
-    // Day 7 VIA 等待：中央卡片进度条（仅 VIA_WAIT 阶段显示）
     if (e.isViaWaiting) {
       drawViaProgressBar(this.ctx, w, h, e.viaWaitTierValue, e.viaWaitProgress);
     }
-
-    // 转场覆盖（最后画）：VIA 切层用 shutter 折叠，强制弹层走原 fade
     if (e.isViaTransition) {
       drawShutterFold(this.ctx, w, h, e.transitionAlpha);
     } else {
@@ -224,7 +232,6 @@ struct GamePage {
     }
   }
 
-  // 滑动手势 → 网格方向 → 引擎 tryMove
   private handleSwipe(dx: number, dy: number): void {
     if (this.engine === null) {
       return;
@@ -240,7 +247,6 @@ struct GamePage {
     }
   }
 
-  // 虚拟方向键按下
   private handleDpad(dCol: number, dRow: number): void {
     if (this.engine === null) {
       return;
@@ -248,7 +254,6 @@ struct GamePage {
     (this.engine as GameEngine).tryMove(dCol, dRow);
   }
 
-  // score-algorithm：EXEC 激活键 → 触发当前落点 VIA 切层 / EXIT 写回
   private handleInteract(): void {
     if (this.engine === null) {
       return;
@@ -256,14 +261,87 @@ struct GamePage {
     (this.engine as GameEngine).tryInteract();
   }
 
-  // EXEC 按钮文案：按落点类型映射到缓存命中 / 写回术语
+  // 取触摸事件第一个触点坐标（相对 Canvas）
+  private firstTouchXY(event: TouchEvent): number[] | null {
+    if (event.changedTouches !== undefined && event.changedTouches.length > 0) {
+      return [event.changedTouches[0].x, event.changedTouches[0].y];
+    }
+    if (event.touches !== undefined && event.touches.length > 0) {
+      return [event.touches[0].x, event.touches[0].y];
+    }
+    return null;
+  }
+
+  // 点击命中测试：屏幕坐标 → 网格 → 查瓦片 → 弹信息卡
+  private handleTap(x: number, y: number): void {
+    if (this.engine === null || this.lastCfg === null) {
+      return;
+    }
+    const e: GameEngine = this.engine as GameEngine;
+    const cfg: IsoConfig = this.lastCfg as IsoConfig;
+    const g: GridPoint = screenToGrid(x, y, e.currentLayer, cfg);
+    const col: number = Math.round(g.col);
+    const row: number = Math.round(g.row);
+    const tile: Tile | undefined = e.map.getTile(col, row, e.currentLayer);
+    if (tile === undefined) {
+      return;
+    }
+    this.openInfoForTile(tile);
+  }
+
+  // 按瓦片类型填充信息卡
+  private openInfoForTile(tile: Tile): void {
+    let title: string = '';
+    let body: string = '';
+    let accent: string = '#22d3a8';
+    if (tile.type === TileType.FRAGMENT) {
+      const label: string = tile.operandLabel.length > 0 ? tile.operandLabel : '操作数';
+      title = label + ' — ' + fragmentKindName(tile.fragKind);
+      accent = '#4aa3ff';
+      body = '类型：' + fragmentKindName(tile.fragKind) + '\n'
+        + '作用：执行 LOAD/MOV 将该值装入寄存器文件\n'
+        + (tile.instrIndex > 0 ? '来源指令：第 ' + tile.instrIndex + ' 条' : '');
+    } else if (tile.type === TileType.GATE) {
+      const op: string = aluOpName(tile.aluOp);
+      title = op + ' 门';
+      accent = tile.locked ? '#d63b3b' : '#22d3a8';
+      body = '运算：' + op + (tile.aluOperands.length > 0 ? '  ' + tile.aluOperands : '') + '\n'
+        + '通过条件：持有源操作数后执行 ALU 运算\n'
+        + '通过后生成结果寄存器（替换源操作数）';
+    } else if (tile.type === TileType.VIA) {
+      const up: boolean = tile.viaTarget > this.currentLayer;
+      title = tierCacheName(tile.viaTier) + ' — ' + (up ? 'CALL' : 'RET');
+      accent = '#ffd24a';
+      body = '缓存命中：' + tierCacheName(tile.viaTier) + '\n'
+        + '行为：' + (up ? 'CALL 跨层跳转（上行）' : 'RET 返回（下行）') + '\n'
+        + (tile.locked ? '当前锁定：需集齐本层操作数后解锁' : '已解锁，可激活 EXEC');
+    } else if (tile.type === TileType.THERMAL_VIA) {
+      title = '散热通道';
+      accent = '#a8e6ff';
+      body = '降热 30（PIPELINE FLUSH 流水线气泡）\n单次使用，踩踏后烧毁';
+    } else if (tile.type === TileType.RAW_HAZARD) {
+      title = 'RAW 数据冒险';
+      accent = '#b026ff';
+      body = '读后写冒险：踩上失效一个持有寄存器\n需重新 LOAD 对应操作数';
+    } else if (tile.type === TileType.EXIT) {
+      title = 'STORE / 写回 (WB)';
+      accent = '#22d3a8';
+      body = '终点 = 写回结果寄存器\n集齐全部操作数后到达即通关';
+    } else {
+      return;
+    }
+    this.infoTitle = title;
+    this.infoBody = body;
+    this.infoAccent = accent;
+    this.showInfo = true;
+  }
+
   private interactLabel(): string {
     if (this.interactHint === 'EXIT') {
       return '⏎ WB 写回';
     }
     if (this.interactHint.indexOf('VIA') === 0) {
       const tier: number = Number(this.interactHint.substring(3));
-      // DRAM 是"访问未命中"，L1$/L2$ 是"命中"
       if (tier === 2) {
         return '⚡ DRAM 访问';
       }
@@ -272,18 +350,31 @@ struct GamePage {
     return '· EXEC ·';
   }
 
-  // 热量阶梯色：≥80 红（过热）/ ≥50 黄（警示）/ 其余青绿（凉）
+  // 热量阶梯色：≥60 红（过热）/ ≥40 黄（警示）/ 其余青绿（凉）
   private heatColor(): string {
-    if (this.currentHeat >= 80) {
+    if (this.currentHeat >= 60) {
       return '#ff6b6b';
     }
-    if (this.currentHeat >= 50) {
+    if (this.currentHeat >= 40) {
       return '#ffd166';
     }
     return '#22d3a8';
   }
 
-  // 左侧 HUD 信息栏：标题 / 层数 / 碎片 / 操作按钮
+  // CPI 颜色：≤1.2 金 / ≤2.0 青绿 / ≤4.0 银 / 其余红
+  private cpiColor(): string {
+    if (this.cpi <= 1.2) {
+      return '#ffd24a';
+    }
+    if (this.cpi <= 2.0) {
+      return '#22d3a8';
+    }
+    if (this.cpi <= 4.0) {
+      return '#d6dde6';
+    }
+    return '#ff6b6b';
+  }
+
   @Builder
   Sidebar() {
     Column() {
@@ -297,18 +388,16 @@ struct GamePage {
           router.back();
         })
 
-      // 标题区
       Text('TauRealmMaze')
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
         .fontColor('#22d3a8')
-        .margin({ top: 36, bottom: 4 })
-      Text('韬略 · 指令流水线')
+        .margin({ top: 28, bottom: 4 })
+      Text(this.instrType)
         .fontSize(12)
         .fontColor('#5a7088')
-        .margin({ bottom: 32 })
+        .margin({ bottom: 24 })
 
-      // 当前层（机器语义名 + Layer 序号）
       Text('当前存储层级')
         .fontSize(12)
         .fontColor('#5a7088')
@@ -319,18 +408,16 @@ struct GamePage {
       Text('Layer ' + this.currentLayer + ' / ' + (this.TARGET_LAYERS - 1))
         .fontSize(11)
         .fontColor('#5a7088')
-        .margin({ bottom: 24 })
+        .margin({ bottom: 20 })
 
-      // 当前层操作数（LOAD）计数
-      Text('操作数 LOAD')
+      Text('本层操作数 LOAD')
         .fontSize(12)
         .fontColor('#5a7088')
       Text('◆ ' + this.currentFragments + ' / ' + this.currentFragmentTotal)
         .fontSize(20)
         .fontColor('#ffd166')
-        .margin({ top: 4, bottom: 24 })
+        .margin({ top: 4, bottom: 20 })
 
-      // 本层热量（蓝→黄→红阶梯）
       Text('本层热量')
         .fontSize(12)
         .fontColor('#5a7088')
@@ -340,36 +427,31 @@ struct GamePage {
         .width('100%')
         .margin({ top: 6 })
       Text(Math.floor(this.currentHeat) + ' / ' + this.heatMax
-          + (this.currentHeat >= 80 ? '  · 过热！' : ''))
+          + (this.currentHeat >= 60 ? '  · 过热！' : ''))
         .fontSize(14)
         .fontColor(this.heatColor())
-        .margin({ top: 4, bottom: 24 })
+        .margin({ top: 4, bottom: 20 })
 
-      // 分支预测刷新倒计时（每 20 步触发一次动态重构 = BRANCH MISPRED）
       Text('分支预测刷新')
         .fontSize(12)
         .fontColor('#5a7088')
       Text(this.stepsUntilRestructure + ' 步')
-        .fontSize(20)
-        .fontColor('#ff9a40')
-        .margin({ top: 4, bottom: 24 })
-
-      // τ 仪表：实际 / 理论最优（CPI = 实际/最优，结算时评级）
-      Text('τ / 理论最优')
-        .fontSize(12)
-        .fontColor('#5a7088')
-      Text(this.tau + ' / ' + this.optimalTau + ' cyc')
         .fontSize(18)
-        .fontColor('#22d3a8')
-        .margin({ top: 4, bottom: 24 })
+        .fontColor('#ff9a40')
+        .margin({ top: 4, bottom: 20 })
 
-      Text('总操作数')
+      // CPI 实时仪表（= (步数+延迟)/指令数）
+      Text('CPI 实时')
         .fontSize(12)
         .fontColor('#5a7088')
-      Text(this.totalPicked + ' / ' + this.totalAll)
-        .fontSize(16)
-        .fontColor('#ffd166')
-        .margin({ top: 4 })
+      Text(this.cpi.toFixed(2))
+        .fontSize(22)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.cpiColor())
+        .margin({ top: 4, bottom: 1 })
+      Text('指令 ' + this.executedCount + ' / ' + (this.instructions.length > 0 ? this.instructions.length : this.totalAll))
+        .fontSize(11)
+        .fontColor('#5a7088')
 
       Blank()
 
@@ -384,18 +466,16 @@ struct GamePage {
           this.renderMap();
         })
     }
-    .width(240)
+    .width(220)
     .height('100%')
-    .padding({ left: 20, right: 20, top: 24, bottom: 24 })
+    .padding({ left: 18, right: 18, top: 24, bottom: 24 })
     .alignItems(HorizontalAlign.Start)
     .backgroundColor(this.SIDEBAR_BG)
   }
 
-  // 右下角浮动 D-Pad（覆盖在 Canvas 之上）
   @Builder
   DPad() {
     Column() {
-      // score-algorithm：EXEC 激活键，仅落点为已解锁 VIA / EXIT 时点亮
       Button(this.interactLabel())
         .width(132)
         .height(44)
@@ -433,10 +513,8 @@ struct GamePage {
 
   build() {
     Row() {
-      // 左：HUD 信息栏（固定宽度）
       this.Sidebar()
 
-      // 右：游戏区（Canvas + 右下 DPad 浮层）
       Stack({ alignContent: Alignment.BottomEnd }) {
         Canvas(this.ctx)
           .width('100%')
@@ -445,14 +523,80 @@ struct GamePage {
           .onReady(() => {
             this.renderMap();
           })
+          .onTouch((event: TouchEvent) => {
+            const xy: number[] | null = this.firstTouchXY(event);
+            if (xy === null) {
+              return;
+            }
+            if (event.type === TouchType.Down) {
+              this.touchDownX = xy[0];
+              this.touchDownY = xy[1];
+            } else if (event.type === TouchType.Up) {
+              const dx: number = xy[0] - this.touchDownX;
+              const dy: number = xy[1] - this.touchDownY;
+              if (Math.abs(dx) < this.SWIPE_THRESHOLD && Math.abs(dy) < this.SWIPE_THRESHOLD) {
+                this.handleTap(xy[0], xy[1]);
+              }
+            }
+          })
+
+        // 顶部持有条
+        Column() {
+          HoldingBar({
+            heldLabels: this.heldLabels,
+            nextInstr: this.nextInstr,
+            progressText: this.progressText
+          })
+        }
+        .width('62%')
+        .position({ top: 10, left: 16 })
+
+        // 右上角抽屉开关 ≡
+        Button('≡ 指令')
+          .fontSize(13)
+          .height(36)
+          .backgroundColor('#1a2238dd')
+          .fontColor('#22d3a8')
+          .position({ top: 10, right: 16 })
+          .onClick(() => {
+            this.showDrawer = !this.showDrawer;
+          })
 
         this.DPad()
 
-        // 右下角音乐面板（D-Pad 左侧）
+        // 音乐面板（D-Pad 左侧）
         Column() {
           MusicPanel()
         }
         .position({ left: 24, bottom: 24 })
+
+        // 点击信息卡（右侧中部）
+        if (this.showInfo) {
+          Column() {
+            InfoPanel({
+              title: this.infoTitle,
+              body: this.infoBody,
+              accent: this.infoAccent,
+              onClose: () => { this.showInfo = false; }
+            })
+          }
+          .position({ top: 56, right: 16 })
+        }
+
+        // 指令抽屉（右侧全高）
+        if (this.showDrawer) {
+          Column() {
+            InstructionDrawer({
+              instructions: this.instructions,
+              executedCount: this.executedCount,
+              instrType: this.instrType,
+              fromFallback: this.fromFallback,
+              onClose: () => { this.showDrawer = false; }
+            })
+          }
+          .height('100%')
+          .position({ top: 0, right: 0 })
+        }
       }
       .layoutWeight(1)
       .height('100%')
